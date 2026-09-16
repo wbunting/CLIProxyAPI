@@ -100,9 +100,13 @@ func (h *Handler) GetLatestVersion(c *gin.Context) {
 
 func WriteConfig(path string, data []byte) error {
 	data = config.NormalizeCommentIndentation(data)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
+	}
+	if errChmod := f.Chmod(0o600); errChmod != nil {
+		_ = f.Close()
+		return errChmod
 	}
 	if _, errWrite := f.Write(data); errWrite != nil {
 		_ = f.Close()

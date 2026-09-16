@@ -1,0 +1,23 @@
+[Unit]
+Description=Private AI Router
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.config/ai-router
+ExecStart=%h/.local/share/ai-router/current/cli-proxy-api --config %h/.config/ai-router/config.yaml --local-model --no-browser
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/ai-router %h/.local/state/ai-router
+MemoryMax=4G
+TasksMax=512
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target

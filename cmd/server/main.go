@@ -129,6 +129,7 @@ func main() {
 	var tuiMode bool
 	var standalone bool
 	var localModel bool
+	var remoteModelCatalogs bool
 
 	// Define command-line flags for different operation modes.
 	flag.BoolVar(&codexLogin, "codex-login", false, "Login to Codex using OAuth")
@@ -155,7 +156,8 @@ func main() {
 	flag.BoolVar(&homeDisableClusterDiscovery, "home-disable-cluster-discovery", false, "Disable Home CLUSTER NODES discovery and keep using the configured -home-jwt address")
 	flag.BoolVar(&tuiMode, "tui", false, "Start with terminal management UI")
 	flag.BoolVar(&standalone, "standalone", false, "In TUI mode, start an embedded local server")
-	flag.BoolVar(&localModel, "local-model", false, "Use embedded models.json and codex_client_models.json only, skip remote model catalog fetching")
+	flag.BoolVar(&localModel, "local-model", false, "Use embedded model catalogs only (the default; retained for compatibility)")
+	flag.BoolVar(&remoteModelCatalogs, "remote-model-catalogs", false, "Opt in to unsigned remote model catalog updates")
 
 	flag.CommandLine.Usage = func() {
 		out := flag.CommandLine.Output()
@@ -194,6 +196,7 @@ func main() {
 
 	// Parse the command-line flags.
 	flag.Parse()
+	localModel = shouldUseLocalModelCatalogs(localModel, remoteModelCatalogs)
 
 	if discoverGateways || discoverJSON {
 		cfgInclude, cfgExclude := cmd.LoadDiscoveryScanFilters(configPath)
@@ -831,6 +834,10 @@ func modelCatalogUpdaterPlan(localModel, homeEnabled bool) (startModels, startCo
 		return false, false, false
 	}
 	return !homeEnabled, true, true
+}
+
+func shouldUseLocalModelCatalogs(localModel, remoteModelCatalogs bool) bool {
+	return localModel || !remoteModelCatalogs
 }
 
 func startModelCatalogUpdaters(localModel, homeEnabled bool) {
