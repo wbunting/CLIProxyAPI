@@ -130,6 +130,7 @@ func main() {
 	var standalone bool
 	var localModel bool
 	var remoteModelCatalogs bool
+	var remoteVersionMetadata bool
 
 	// Define command-line flags for different operation modes.
 	flag.BoolVar(&codexLogin, "codex-login", false, "Login to Codex using OAuth")
@@ -158,6 +159,7 @@ func main() {
 	flag.BoolVar(&standalone, "standalone", false, "In TUI mode, start an embedded local server")
 	flag.BoolVar(&localModel, "local-model", false, "Use embedded model catalogs only (the default; retained for compatibility)")
 	flag.BoolVar(&remoteModelCatalogs, "remote-model-catalogs", false, "Opt in to unsigned remote model catalog updates")
+	flag.BoolVar(&remoteVersionMetadata, "remote-version-metadata", false, "Opt in to remote client version metadata updates")
 
 	flag.CommandLine.Usage = func() {
 		out := flag.CommandLine.Output()
@@ -745,7 +747,9 @@ func main() {
 			if standalone {
 				// Standalone mode: start an embedded local server and connect TUI client to it.
 				managementasset.StartAutoUpdater(context.Background(), configFilePath)
-				misc.StartAntigravityVersionUpdater(context.Background())
+				if remoteVersionMetadata {
+					misc.StartAntigravityVersionUpdater(context.Background())
+				}
 				startModelCatalogUpdaters(localModel, cfg.Home.Enabled)
 				hook := tui.NewLogHook(2000)
 				hook.SetFormatter(&logging.LogFormatter{})
@@ -819,7 +823,9 @@ func main() {
 		} else {
 			// Start the main proxy service
 			managementasset.StartAutoUpdater(context.Background(), configFilePath)
-			misc.StartAntigravityVersionUpdater(context.Background())
+			if remoteVersionMetadata {
+				misc.StartAntigravityVersionUpdater(context.Background())
+			}
 			startModelCatalogUpdaters(localModel, cfg.Home.Enabled)
 			cmd.StartServiceWithPluginHost(cfg, configFilePath, password, pluginHost, serverOptions...)
 		}
@@ -950,7 +956,7 @@ func argvFlagConsumesValue(name string) bool {
 	case "codex-login", "codex-device-login", "claude-login", "no-browser",
 		"antigravity-login", "kimi-login", "xai-login", "devin-login",
 		"discover", "discover-json", "home-disable-cluster-discovery",
-		"tui", "standalone", "local-model":
+		"tui", "standalone", "local-model", "remote-model-catalogs", "remote-version-metadata":
 		return false
 	default:
 		return name != ""
