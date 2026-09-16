@@ -17,8 +17,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Refresh models catalog
-        run: bash .github/scripts/refresh-model-catalogs.sh
+      - name: Test hardened paths
+        run: go test ./cmd/server ./internal/api/handlers/management ./sdk/cliproxy
+      - name: Vet
+        run: go vet ./...
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          govulncheck ./...
       - name: Build
         run: |
           go build -o test-output ./cmd/server

@@ -362,7 +362,7 @@ func (s *Service) ensureAuthDir() error {
 	info, err := os.Stat(s.cfg.AuthDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if mkErr := os.MkdirAll(s.cfg.AuthDir, 0o755); mkErr != nil {
+			if mkErr := os.MkdirAll(s.cfg.AuthDir, 0o700); mkErr != nil {
 				return fmt.Errorf("cliproxy: failed to create auth directory %s: %w", s.cfg.AuthDir, mkErr)
 			}
 			log.Infof("created missing auth directory: %s", s.cfg.AuthDir)
@@ -372,6 +372,9 @@ func (s *Service) ensureAuthDir() error {
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("cliproxy: auth path exists but is not a directory: %s", s.cfg.AuthDir)
+	}
+	if chmodErr := os.Chmod(s.cfg.AuthDir, 0o700); chmodErr != nil {
+		return fmt.Errorf("cliproxy: secure auth directory %s: %w", s.cfg.AuthDir, chmodErr)
 	}
 	return nil
 }

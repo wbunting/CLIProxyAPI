@@ -166,6 +166,28 @@ func TestModelCatalogUpdaterPlan(t *testing.T) {
 	}
 }
 
+func TestShouldUseLocalModelCatalogs(t *testing.T) {
+	tests := []struct {
+		name                string
+		localModel          bool
+		remoteModelCatalogs bool
+		want                bool
+	}{
+		{name: "secure default uses embedded catalogs", want: true},
+		{name: "explicit local mode uses embedded catalogs", localModel: true, want: true},
+		{name: "remote catalogs require explicit opt in", remoteModelCatalogs: true, want: false},
+		{name: "local mode overrides remote opt in", localModel: true, remoteModelCatalogs: true, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldUseLocalModelCatalogs(tt.localModel, tt.remoteModelCatalogs); got != tt.want {
+				t.Fatalf("shouldUseLocalModelCatalogs(%t, %t) = %t, want %t", tt.localModel, tt.remoteModelCatalogs, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHomeConfigPayloadPortApplication(t *testing.T) {
 	tests := []struct {
 		name     string
