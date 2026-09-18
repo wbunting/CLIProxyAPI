@@ -95,6 +95,16 @@ func PopOldest(count int) [][]byte {
 	return global.popOldest(count)
 }
 
+// SnapshotNewest returns up to count retained usage records without consuming
+// them. Records are ordered oldest-to-newest so callers can aggregate them into
+// time-series buckets directly.
+func SnapshotNewest(count int) [][]byte {
+	if !Enabled() || count <= 0 {
+		return nil
+	}
+	return global.snapshotNewest(count)
+}
+
 func SubscribeUsage() (<-chan []byte, func()) {
 	return global.subscribe(usageSubscriberBuffer, []byte(usageSupportRefreshPayload))
 }
@@ -136,6 +146,25 @@ func (q *queue) enqueue(payload []byte) {
 		payload:    append([]byte(nil), payload...),
 	})
 	q.maybeCompactLocked()
+}
+
+func (q *queue) snapshotNewest(count int) [][]byte {
+	now := time.Now()
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.pruneLocked(now)
+	start := q.head
+	if available := len(q.items) - start; available > count {
+		start = len(q.items) - count
+	}
+
+	out := make([][]byte, 0, len(q.items)-start)
+	for _, item := range q.items[start:] {
+		out = append(out, append([]byte(nil), item.payload...))
+	}
+	return out
 }
 
 func (q *queue) publishToSubscribers(payload []byte) bool {

@@ -808,6 +808,18 @@ type OpenAICompatibility struct {
 
 	// RequestScopedErrors configures custom classification rules for upstream errors.
 	RequestScopedErrors []RequestScopedErrorRule `yaml:"request-scoped-errors,omitempty" json:"request-scoped-errors,omitempty"`
+
+	// ClaudeCodeHarness opts this provider into the management-only Claude Code
+	// harness quota view. The upstream remains an ordinary OpenAI-compatible
+	// provider for inference; this block never exposes its API key to clients.
+	ClaudeCodeHarness *ClaudeCodeHarnessConfig `yaml:"claude-code-harness,omitempty" json:"claude-code-harness,omitempty"`
+}
+
+// ClaudeCodeHarnessConfig describes the management metadata for an official
+// Claude Code/Agent SDK worker sitting behind an OpenAI-compatible adapter.
+type ClaudeCodeHarnessConfig struct {
+	// DisplayName is shown in the quota dashboard.
+	DisplayName string `yaml:"display-name,omitempty" json:"display-name,omitempty"`
 }
 
 // OpenAICompatibilityAPIKey represents an API key configuration with optional proxy setting.

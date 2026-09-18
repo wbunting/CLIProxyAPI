@@ -215,7 +215,7 @@ func TestEnsureIndexUsesOAuthTypeAndAbsolutePath(t *testing.T) {
 	}
 }
 
-func TestRecentRequestsSnapshotEmptyReturnsTwentyBuckets(t *testing.T) {
+func TestRecentRequestsSnapshotEmptyReturnsTwentyFourHours(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).In(time.Local)
 	a := &Auth{}
 

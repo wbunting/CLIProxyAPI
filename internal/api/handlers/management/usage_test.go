@@ -66,6 +66,33 @@ func TestGetUsageQueueInvalidCountDoesNotPop(t *testing.T) {
 	})
 }
 
+func TestGetUsageSnapshotDoesNotConsumeRecords(t *testing.T) {
+	withManagementUsageQueue(t, func() {
+		redisqueue.Enqueue([]byte(`{"model":"first"}`))
+		redisqueue.Enqueue([]byte(`{"model":"second"}`))
+
+		h := &Handler{}
+		for attempt := 0; attempt < 2; attempt++ {
+			recorder := httptest.NewRecorder()
+			ginCtx, _ := gin.CreateTestContext(recorder)
+			ginCtx.Request = httptest.NewRequest(http.MethodGet, "/v0/management/usage-snapshot?count=2", nil)
+
+			h.GetUsageSnapshot(ginCtx)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("attempt %d status = %d, want %d", attempt, recorder.Code, http.StatusOK)
+			}
+			var records []map[string]any
+			if err := json.Unmarshal(recorder.Body.Bytes(), &records); err != nil {
+				t.Fatalf("attempt %d decode: %v", attempt, err)
+			}
+			if len(records) != 2 || records[0]["model"] != "first" || records[1]["model"] != "second" {
+				t.Fatalf("attempt %d records = %#v", attempt, records)
+			}
+		}
+	})
+}
+
 func withManagementUsageQueue(t *testing.T, fn func()) {
 	t.Helper()
 

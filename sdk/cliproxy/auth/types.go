@@ -150,7 +150,7 @@ func IsPluginVirtualAuth(auth *Auth) bool {
 
 const (
 	recentRequestBucketSeconds int64 = 10 * 60
-	recentRequestBucketCount         = 20
+	recentRequestBucketCount         = 24 * 60 / 10
 )
 
 type recentRequestBucket struct {

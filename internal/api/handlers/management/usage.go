@@ -13,6 +13,8 @@ import (
 
 type usageQueueRecord []byte
 
+const maxUsageSnapshotRecords = 20000
+
 func (r usageQueueRecord) MarshalJSON() ([]byte, error) {
 	if json.Valid(r) {
 		return append([]byte(nil), r...), nil
@@ -39,6 +41,33 @@ func (h *Handler) GetUsageQueue(c *gin.Context) {
 		records = append(records, usageQueueRecord(append([]byte(nil), item...)))
 	}
 
+	c.JSON(http.StatusOK, records)
+}
+
+// GetUsageSnapshot returns retained usage records without consuming the queue.
+// It exists for read-only dashboards; /usage-queue keeps its worker-oriented
+// destructive semantics.
+func (h *Handler) GetUsageSnapshot(c *gin.Context) {
+	if h == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "handler unavailable"})
+		return
+	}
+
+	count := maxUsageSnapshotRecords
+	if value := strings.TrimSpace(c.Query("count")); value != "" {
+		parsed, errCount := strconv.Atoi(value)
+		if errCount != nil || parsed <= 0 || parsed > maxUsageSnapshotRecords {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "count must be between 1 and 20000"})
+			return
+		}
+		count = parsed
+	}
+
+	items := redisqueue.SnapshotNewest(count)
+	records := make([]usageQueueRecord, 0, len(items))
+	for _, item := range items {
+		records = append(records, usageQueueRecord(append([]byte(nil), item...)))
+	}
 	c.JSON(http.StatusOK, records)
 }
 
