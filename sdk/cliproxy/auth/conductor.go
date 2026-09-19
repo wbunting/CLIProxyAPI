@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,6 +11,7 @@ import (
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
+	log "github.com/sirupsen/logrus"
 )
 
 // ProviderExecutor defines the contract required by Manager to execute provider calls.
@@ -189,7 +191,8 @@ type Manager struct {
 	// 401 recoveries and auto-refresh workers do not race the same refresh_token.
 	refreshLocks sync.Map
 	// persistLocks serializes disk persistence per auth ID and guards against out-of-order writes.
-	persistLocks sync.Map
+	persistLocks       sync.Map
+	recentRequestStore *RecentRequestStore
 }
 
 // NewManager constructs a manager with optional custom selector and hook.
@@ -222,6 +225,54 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 	}
 	manager.scheduler = newAuthScheduler(selector)
 	return manager
+}
+
+// SetRecentRequestStore enables durable request-result history and rehydrates
+// currently registered credentials. Repeated calls are idempotent because the
+// in-memory request counters are reset before replay.
+func (m *Manager) SetRecentRequestStore(store *RecentRequestStore) error {
+	if m == nil {
+		return nil
+	}
+	var records []RecentRequestRecord
+	var errLoad error
+	if store != nil {
+		records, errLoad = store.Load()
+		if errLoad != nil {
+			return errLoad
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recentRequestStore = store
+	for _, auth := range m.auths {
+		auth.Success = 0
+		auth.Failed = 0
+		auth.recentRequests = recentRequestRing{}
+	}
+	for _, record := range records {
+		auth := m.auths[strings.TrimSpace(record.AuthID)]
+		if auth == nil {
+			continue
+		}
+		auth.recordRecentRequest(record.Time, record.Success)
+		if record.Success {
+			auth.Success++
+		} else {
+			auth.Failed++
+		}
+	}
+	return nil
+}
+
+func (m *Manager) appendRecentRequest(record RecentRequestRecord) {
+	if m == nil || m.recentRequestStore == nil {
+		return
+	}
+	if errAppend := m.recentRequestStore.Append(record); errAppend != nil {
+		log.WithError(errAppend).Warn("failed to persist recent request result")
+	}
 }
 
 // SetResultPolicy sets an execution result policy invoked before in-memory quota mutations and persistence.

@@ -1003,6 +1003,14 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 		reg.ApplyClientModelProjections(result.AuthID, regEpoch, authSnapshot.Generation, projections)
 	}
 
+	if authSnapshot != nil {
+		m.appendRecentRequest(RecentRequestRecord{
+			AuthID:   result.AuthID,
+			Provider: result.Provider,
+			Time:     now,
+			Success:  result.Success,
+		})
+	}
 	m.hook.OnResult(ctx, result)
 	m.publishErrorEvent(result, authSnapshot)
 	m.updateSessionAffinity(result)
@@ -1063,6 +1071,14 @@ func (m *Manager) recordAvailabilityNeutralResult(ctx context.Context, result Re
 	}
 	m.mu.Unlock()
 
+	if authSnapshot != nil {
+		m.appendRecentRequest(RecentRequestRecord{
+			AuthID:   result.AuthID,
+			Provider: result.Provider,
+			Time:     authSnapshot.UpdatedAt,
+			Success:  result.Success,
+		})
+	}
 	m.hook.OnResult(ctx, result)
 	m.publishErrorEvent(result, authSnapshot)
 }

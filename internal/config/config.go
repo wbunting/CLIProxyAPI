@@ -62,7 +62,7 @@ type Config struct {
 
 	// RedisUsageQueueRetentionSeconds controls how long usage queue items are retained
 	// in memory for Management API consumers.
-	// Default: 60. Max: 3600.
+	// Default: 60. Max: 31536000 (one year).
 	RedisUsageQueueRetentionSeconds int `yaml:"redis-usage-queue-retention-seconds" json:"redis-usage-queue-retention-seconds"`
 
 	// DisableCooling disables auth/model cooldown scheduling when true unless a credential or provider overrides it.

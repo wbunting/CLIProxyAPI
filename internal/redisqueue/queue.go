@@ -4,11 +4,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const (
 	defaultRetentionSeconds int64 = 60
-	maxRetentionSeconds     int64 = 3600
+	maxRetentionSeconds     int64 = 365 * 24 * 60 * 60
 	usageSubscriberBuffer         = 256
 	errorSubscriberBuffer         = 256
 
@@ -22,11 +24,13 @@ type queueItem struct {
 }
 
 type queue struct {
-	mu               sync.Mutex
-	items            []queueItem
-	head             int
-	subscribers      map[uint64]chan []byte
-	nextSubscriberID uint64
+	mu                     sync.Mutex
+	items                  []queueItem
+	head                   int
+	subscribers            map[uint64]chan []byte
+	nextSubscriberID       uint64
+	persistencePath        string
+	lastPersistenceRewrite time.Time
 }
 
 var (
@@ -60,6 +64,7 @@ func SetRetentionSeconds(value int) {
 		normalized = maxRetentionSeconds
 	}
 	retentionSeconds.Store(normalized)
+	global.pruneAndPersist(time.Now())
 }
 
 func Enqueue(payload []byte) {
@@ -69,9 +74,7 @@ func Enqueue(payload []byte) {
 	if len(payload) == 0 {
 		return
 	}
-	if global.publishToSubscribers(payload) {
-		return
-	}
+	global.publishToSubscribers(payload)
 	global.enqueue(payload)
 }
 
@@ -101,6 +104,9 @@ func PopOldest(count int) [][]byte {
 func SnapshotNewest(count int) [][]byte {
 	if !Enabled() || count <= 0 {
 		return nil
+	}
+	if errReload := global.reloadPersistenceIfEmpty(); errReload != nil {
+		log.WithError(errReload).Warn("failed to reload usage persistence")
 	}
 	return global.snapshotNewest(count)
 }
@@ -141,10 +147,19 @@ func (q *queue) enqueue(payload []byte) {
 	defer q.mu.Unlock()
 
 	q.pruneLocked(now)
-	q.items = append(q.items, queueItem{
+	item := queueItem{
 		enqueuedAt: now,
 		payload:    append([]byte(nil), payload...),
-	})
+	}
+	q.items = append(q.items, item)
+	if errAppend := q.appendPersistenceLocked(item); errAppend != nil {
+		log.WithError(errAppend).Warn("failed to append usage persistence")
+	}
+	if q.lastPersistenceRewrite.IsZero() || now.Sub(q.lastPersistenceRewrite) >= persistenceRewriteInterval {
+		if errRewrite := q.rewritePersistenceLocked(now); errRewrite != nil {
+			log.WithError(errRewrite).Warn("failed to compact usage persistence")
+		}
+	}
 	q.maybeCompactLocked()
 }
 
@@ -236,6 +251,9 @@ func (q *queue) popOldest(count int) [][]byte {
 	if available <= 0 {
 		q.items = nil
 		q.head = 0
+		if errRewrite := q.rewritePersistenceLocked(now); errRewrite != nil {
+			log.WithError(errRewrite).Warn("failed to persist empty usage queue")
+		}
 		return nil
 	}
 	if count > available {
@@ -249,6 +267,9 @@ func (q *queue) popOldest(count int) [][]byte {
 	}
 	q.head += count
 	q.maybeCompactLocked()
+	if errRewrite := q.rewritePersistenceLocked(now); errRewrite != nil {
+		log.WithError(errRewrite).Warn("failed to persist usage queue pop")
+	}
 	return out
 }
 

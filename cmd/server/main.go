@@ -628,6 +628,11 @@ func main() {
 	}
 	redisqueue.SetUsageStatisticsEnabled(cfg.UsageStatisticsEnabled)
 	redisqueue.SetRetentionSeconds(cfg.RedisUsageQueueRetentionSeconds)
+	if strings.TrimSpace(configFilePath) != "" {
+		if errPersistence := redisqueue.SetPersistencePath(filepath.Join(filepath.Dir(configFilePath), "usage-queue.jsonl")); errPersistence != nil {
+			log.WithError(errPersistence).Warn("failed to load durable usage history")
+		}
+	}
 	coreauth.SetQuotaCooldownDisabled(cfg.DisableCooling)
 	coreauth.SetTransientErrorCooldownSeconds(cfg.TransientErrorCooldownSeconds)
 
