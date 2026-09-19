@@ -239,6 +239,32 @@ func MaskSensitiveHeaderValue(key, value string) string {
 	}
 }
 
+const RedactedHeaderValue = "[REDACTED]"
+
+// RedactRequestLogHeaderValue removes credential-bearing header values from request logs.
+// Matching is case-insensitive. Standard authentication and cookie headers are matched
+// exactly; common API-key, token, and secret header names retain the existing broader
+// classification used by request logging.
+func RedactRequestLogHeaderValue(key, value string) string {
+	_ = value
+	lowerKey := strings.ToLower(strings.TrimSpace(key))
+	switch {
+	case lowerKey == "authorization",
+		lowerKey == "proxy-authorization",
+		lowerKey == "cookie",
+		lowerKey == "cookie2",
+		lowerKey == "set-cookie",
+		lowerKey == "set-cookie2",
+		strings.Contains(lowerKey, "api-key"),
+		strings.Contains(lowerKey, "apikey"),
+		strings.Contains(lowerKey, "token"),
+		strings.Contains(lowerKey, "secret"):
+		return RedactedHeaderValue
+	default:
+		return value
+	}
+}
+
 // MaskSensitiveQuery masks sensitive query parameters, e.g. auth_token, within the raw query string.
 func MaskSensitiveQuery(raw string) string {
 	if raw == "" {

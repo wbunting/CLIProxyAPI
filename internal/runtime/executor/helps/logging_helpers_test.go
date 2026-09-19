@@ -71,6 +71,82 @@ func TestRecordAPIRequestClonesDeferredBodyWhenRequestLogDisabled(t *testing.T) 
 	}
 }
 
+func TestUpstreamRequestResponseLogsRedactCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	ctx := context.WithValue(context.Background(), "gin", ginCtx)
+	cfg := &config.Config{SDKConfig: config.SDKConfig{RequestLog: true}}
+
+	RecordAPIRequest(ctx, cfg, UpstreamRequestLog{
+		URL:    "https://api.example.com/v1/responses",
+		Method: http.MethodPost,
+		Headers: http.Header{
+			"aUtHoRiZaTiOn":       {"Bearer upstream-secret"},
+			"pRoXy-AuThOrIzAtIoN": {"Basic proxy-secret"},
+			"cOoKiE":              {"session=one", "refresh=two"},
+			"X-Diagnostic":        {"kept-request"},
+		},
+		Body:      []byte(`{"full":"request-body"}`),
+		AuthType:  "custom",
+		AuthValue: "auth-metadata-secret",
+	})
+	RecordAPIResponseMetadata(ctx, cfg, http.StatusUnauthorized, http.Header{
+		"SeT-cOoKiE":         {"response-session=one", "response-refresh=two"},
+		"CoOkIe":             {"response-cookie=three"},
+		"X-Upstream-Request": {"kept-response"},
+	})
+	AppendAPIResponseChunk(ctx, cfg, []byte(`{"full":"response-body"}`))
+
+	requestValue, exists := ginCtx.Get(apiRequestKey)
+	if !exists {
+		t.Fatal("API_REQUEST was not captured")
+	}
+	responseValue, exists := ginCtx.Get(apiResponseKey)
+	if !exists {
+		t.Fatal("API_RESPONSE was not captured")
+	}
+	logText := string(requestValue.([]byte)) + string(responseValue.([]byte))
+
+	for _, want := range []string{
+		"aUtHoRiZaTiOn: [REDACTED]",
+		"pRoXy-AuThOrIzAtIoN: [REDACTED]",
+		"cOoKiE: [REDACTED]",
+		"SeT-cOoKiE: [REDACTED]",
+		"CoOkIe: [REDACTED]",
+		"X-Diagnostic: kept-request",
+		"X-Upstream-Request: kept-response",
+		"Auth: type=custom",
+		`{"full":"request-body"}`,
+		`{"full":"response-body"}`,
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("upstream log missing %q:\n%s", want, logText)
+		}
+	}
+	requestText := string(requestValue.([]byte))
+	if got := strings.Count(requestText, "cOoKiE: [REDACTED]"); got != 2 {
+		t.Fatalf("redacted request cookie values = %d, want 2:\n%s", got, requestText)
+	}
+	if got := strings.Count(logText, "SeT-cOoKiE: [REDACTED]"); got != 2 {
+		t.Fatalf("redacted response Set-Cookie values = %d, want 2:\n%s", got, logText)
+	}
+	for _, secret := range []string{
+		"upstream-secret",
+		"proxy-secret",
+		"session=one",
+		"refresh=two",
+		"response-session=one",
+		"response-refresh=two",
+		"response-cookie=three",
+		"auth-metadata-secret",
+	} {
+		if strings.Contains(logText, secret) {
+			t.Fatalf("upstream log leaked %q:\n%s", secret, logText)
+		}
+	}
+}
+
 func TestRecordAPIResponseMetadataStoresHeadersWhenRequestLogDisabled(t *testing.T) {
 	ctx := logging.WithResponseHeadersHolder(context.Background())
 	headers := http.Header{}

@@ -119,8 +119,8 @@ func writeRequestInfoWithBody(
 	}
 	for key, values := range headers {
 		for _, value := range values {
-			masked := util.MaskSensitiveHeaderValue(key, value)
-			if _, errWrite := io.WriteString(w, fmt.Sprintf("%s: %s\n", key, masked)); errWrite != nil {
+			redacted := util.RedactRequestLogHeaderValue(key, value)
+			if _, errWrite := io.WriteString(w, fmt.Sprintf("%s: %s\n", key, redacted)); errWrite != nil {
 				return errWrite
 			}
 		}
@@ -380,7 +380,8 @@ func writeResponseSection(w io.Writer, statusCode int, statusWritten bool, respo
 	if responseHeaders != nil {
 		for key, values := range responseHeaders {
 			for _, value := range values {
-				if _, errWrite := io.WriteString(w, fmt.Sprintf("%s: %s\n", key, value)); errWrite != nil {
+				redacted := util.RedactRequestLogHeaderValue(key, value)
+				if _, errWrite := io.WriteString(w, fmt.Sprintf("%s: %s\n", key, redacted)); errWrite != nil {
 					return errWrite
 				}
 			}
@@ -530,7 +531,8 @@ func (l *FileRequestLogger) formatLogContent(url, method string, headers map[str
 	if responseHeaders != nil {
 		for key, values := range responseHeaders {
 			for _, value := range values {
-				content.WriteString(fmt.Sprintf("%s: %s\n", key, value))
+				redacted := util.RedactRequestLogHeaderValue(key, value)
+				content.WriteString(fmt.Sprintf("%s: %s\n", key, redacted))
 			}
 		}
 	}
@@ -702,8 +704,8 @@ func (l *FileRequestLogger) formatRequestInfo(url, method string, headers map[st
 	content.WriteString("=== HEADERS ===\n")
 	for key, values := range headers {
 		for _, value := range values {
-			masked := util.MaskSensitiveHeaderValue(key, value)
-			content.WriteString(fmt.Sprintf("%s: %s\n", key, masked))
+			redacted := util.RedactRequestLogHeaderValue(key, value)
+			content.WriteString(fmt.Sprintf("%s: %s\n", key, redacted))
 		}
 	}
 	content.WriteString("\n")

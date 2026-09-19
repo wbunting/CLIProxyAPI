@@ -194,6 +194,99 @@ func TestDeferredRequestBodyCaptureDoesNotDrainUnreadBody(t *testing.T) {
 	}
 }
 
+func TestRequestLoggingMiddlewareRedactsCredentialHeadersOnErrorPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	logsDir := t.TempDir()
+	logger := logging.NewFileRequestLogger(false, logsDir, "", 10)
+
+	router := gin.New()
+	router.Use(RequestLoggingMiddleware(logger))
+	router.POST("/v1/responses", func(c *gin.Context) {
+		c.Writer.Header()["Set-Cookie"] = []string{"error-session=one", "error-refresh=two"}
+		c.Header("X-Error-Trace", "kept-error-response")
+		executorCtx := context.WithValue(context.Background(), "gin", c)
+		helps.RecordAPIRequest(executorCtx, &config.Config{}, helps.UpstreamRequestLog{
+			URL:    "https://api.example.com/v1/responses",
+			Method: http.MethodPost,
+			Headers: http.Header{
+				"AUTHORIZATION": {"Bearer deferred-upstream-secret"},
+				"COOKIE":        {"deferred-session=one", "deferred-refresh=two"},
+				"X-Debug":       {"kept-deferred-request"},
+			},
+			Body: []byte(`{"translated":true}`),
+		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "rejected"})
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"original":true}`))
+	request.Header = http.Header{
+		"authorization": {"Bearer downstream-error-secret"},
+		"cookie":        {"error-request-session=one", "error-request-refresh=two"},
+		"Content-Type":  {"application/json"},
+		"X-Request-ID":  {"kept-error-request"},
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("response status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if got := response.Result().Cookies(); len(got) != 2 || got[0].Name != "error-session" || got[0].Value != "one" || got[1].Name != "error-refresh" || got[1].Value != "two" {
+		t.Fatalf("actual error response cookies changed: %v", got)
+	}
+
+	entries, errReadDir := os.ReadDir(logsDir)
+	if errReadDir != nil {
+		t.Fatalf("read logs dir: %v", errReadDir)
+	}
+	var logPath string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "error-") && strings.HasSuffix(entry.Name(), ".log") {
+			logPath = logsDir + string(os.PathSeparator) + entry.Name()
+			break
+		}
+	}
+	if logPath == "" {
+		t.Fatal("forced error log was not created")
+	}
+	content, errReadLog := os.ReadFile(logPath)
+	if errReadLog != nil {
+		t.Fatalf("read error log: %v", errReadLog)
+	}
+	logText := string(content)
+	for _, want := range []string{
+		"authorization: [REDACTED]",
+		"cookie: [REDACTED]",
+		"AUTHORIZATION: [REDACTED]",
+		"COOKIE: [REDACTED]",
+		"Set-Cookie: [REDACTED]",
+		"X-Request-ID: kept-error-request",
+		"X-Debug: kept-deferred-request",
+		"X-Error-Trace: kept-error-response",
+		`{"original":true}`,
+		`{"translated":true}`,
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("error log missing %q:\n%s", want, logText)
+		}
+	}
+	for _, secret := range []string{
+		"downstream-error-secret",
+		"error-request-session=one",
+		"error-request-refresh=two",
+		"deferred-upstream-secret",
+		"deferred-session=one",
+		"deferred-refresh=two",
+		"error-session=one",
+		"error-refresh=two",
+	} {
+		if strings.Contains(logText, secret) {
+			t.Fatalf("error log leaked %q:\n%s", secret, logText)
+		}
+	}
+}
+
 func TestRequestLoggingMiddlewareCapturesLargeErrorRequestAndDeferredAPIRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -262,7 +355,7 @@ func TestRequestLoggingMiddlewareCapturesLargeErrorRequestAndDeferredAPIRequest(
 	}
 }
 
-func TestRequestLoggingMiddleware_StreamingResponsesUpstreamSections(t *testing.T) {
+func TestRequestLoggingMiddleware_StreamingResponsesRedactCredentialHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	logsDir := t.TempDir()
@@ -273,12 +366,27 @@ func TestRequestLoggingMiddleware_StreamingResponsesUpstreamSections(t *testing.
 	router.Use(RequestLoggingMiddleware(logger))
 	router.POST("/v1/responses", func(c *gin.Context) {
 		c.Header("Content-Type", "text/event-stream")
+		c.Writer.Header()["Set-Cookie"] = []string{"downstream-session=one", "downstream-refresh=two"}
+		c.Header("X-Downstream-Diagnostic", "kept-downstream")
 		executorCtx := context.WithValue(context.Background(), "gin", c)
 		helps.RecordAPIRequest(executorCtx, cfg, helps.UpstreamRequestLog{
-			URL:     "https://api.example.com/v1/responses",
-			Method:  http.MethodPost,
-			Headers: http.Header{"Content-Type": []string{"application/json"}},
-			Body:    []byte(`{"model":"gpt-5-codex","input":[]}`),
+			URL:    "https://api.example.com/v1/responses",
+			Method: http.MethodPost,
+			Headers: http.Header{
+				"aUtHoRiZaTiOn":       {"Bearer upstream-secret"},
+				"pRoXy-AuThOrIzAtIoN": {"Basic upstream-proxy-secret"},
+				"cOoKiE":              {"upstream-session=one", "upstream-refresh=two"},
+				"Content-Type":        {"application/json"},
+				"X-Upstream-Trace":    {"kept-upstream-request"},
+			},
+			Body:      []byte(`{"model":"gpt-5-codex","input":[]}`),
+			AuthType:  "custom",
+			AuthValue: "upstream-auth-metadata-secret",
+		})
+		helps.RecordAPIResponseMetadata(executorCtx, cfg, http.StatusOK, http.Header{
+			"SeT-cOoKiE":         {"upstream-response-session=one", "upstream-response-refresh=two"},
+			"CoOkIe":             {"upstream-response-cookie=three"},
+			"X-Upstream-Request": {"kept-upstream-response"},
 		})
 		helps.AppendAPIResponseChunk(executorCtx, cfg, []byte("data: {\"type\":\"response.output_item.added\"}\n\n"))
 		_, _ = c.Writer.Write([]byte("data: {\"type\":\"response.output_item.added\"}\n\n"))
@@ -287,13 +395,23 @@ func TestRequestLoggingMiddleware_StreamingResponsesUpstreamSections(t *testing.
 		}
 	})
 
-	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5-codex","input":[],"stream":true}`))
-	request.Header.Set("Content-Type", "application/json")
+	requestBody := `{"model":"gpt-5-codex","input":[],"stream":true}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(requestBody))
+	request.Header = http.Header{
+		"AuThOrIzAtIoN":       {"Bearer downstream-secret"},
+		"PrOxY-AuThOrIzAtIoN": {"Basic downstream-proxy-secret"},
+		"cOoKiE":              {"downstream-session=one", "downstream-refresh=two"},
+		"Content-Type":        {"application/json"},
+		"X-Downstream-Trace":  {"kept-downstream-request"},
+	}
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("response status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if got := response.Result().Cookies(); len(got) != 2 || got[0].Name != "downstream-session" || got[0].Value != "one" || got[1].Name != "downstream-refresh" || got[1].Value != "two" {
+		t.Fatalf("proxied response cookies changed: %v", got)
 	}
 
 	entries, errReadDir := os.ReadDir(logsDir)
@@ -314,11 +432,43 @@ func TestRequestLoggingMiddleware_StreamingResponsesUpstreamSections(t *testing.
 	if errReadLog != nil {
 		t.Fatalf("read log file: %v", errReadLog)
 	}
-	if !bytes.Contains(content, []byte("=== API REQUEST 1 ===")) {
-		t.Fatalf("streaming log missing API REQUEST: %s", string(content))
+	logText := string(content)
+	for _, want := range []string{
+		"=== API REQUEST 1 ===",
+		"=== API RESPONSE 1 ===",
+		requestBody,
+		`{"model":"gpt-5-codex","input":[]}`,
+		"data: {\"type\":\"response.output_item.added\"}",
+		"X-Downstream-Trace: kept-downstream-request",
+		"X-Downstream-Diagnostic: kept-downstream",
+		"X-Upstream-Trace: kept-upstream-request",
+		"X-Upstream-Request: kept-upstream-response",
+		"AuThOrIzAtIoN: [REDACTED]",
+		"aUtHoRiZaTiOn: [REDACTED]",
+		"Set-Cookie: [REDACTED]",
+		"SeT-cOoKiE: [REDACTED]",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("streaming log missing %q:\n%s", want, logText)
+		}
 	}
-	if !bytes.Contains(content, []byte("=== API RESPONSE 1 ===")) {
-		t.Fatalf("streaming log missing API RESPONSE: %s", string(content))
+	for _, secret := range []string{
+		"downstream-secret",
+		"downstream-proxy-secret",
+		"downstream-session=one",
+		"downstream-refresh=two",
+		"upstream-secret",
+		"upstream-proxy-secret",
+		"upstream-session=one",
+		"upstream-refresh=two",
+		"upstream-response-session=one",
+		"upstream-response-refresh=two",
+		"upstream-response-cookie=three",
+		"upstream-auth-metadata-secret",
+	} {
+		if strings.Contains(logText, secret) {
+			t.Fatalf("streaming log leaked %q:\n%s", secret, logText)
+		}
 	}
 }
 

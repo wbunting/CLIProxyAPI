@@ -652,8 +652,8 @@ func writeHeaders(builder *strings.Builder, headers http.Header) {
 			continue
 		}
 		for _, value := range values {
-			masked := util.MaskSensitiveHeaderValue(key, value)
-			builder.WriteString(fmt.Sprintf("%s: %s\n", key, masked))
+			redacted := util.RedactRequestLogHeaderValue(key, value)
+			builder.WriteString(fmt.Sprintf("%s: %s\n", key, redacted))
 		}
 	}
 }
@@ -671,24 +671,8 @@ func formatAuthInfo(info UpstreamRequestLog) string {
 	}
 
 	authType := strings.ToLower(strings.TrimSpace(info.AuthType))
-	authValue := strings.TrimSpace(info.AuthValue)
-	switch authType {
-	case "api_key":
-		if authValue != "" {
-			parts = append(parts, fmt.Sprintf("type=api_key value=%s", util.HideAPIKey(authValue)))
-		} else {
-			parts = append(parts, "type=api_key")
-		}
-	case "oauth":
-		parts = append(parts, "type=oauth")
-	default:
-		if authType != "" {
-			if authValue != "" {
-				parts = append(parts, fmt.Sprintf("type=%s value=%s", authType, authValue))
-			} else {
-				parts = append(parts, fmt.Sprintf("type=%s", authType))
-			}
-		}
+	if authType != "" {
+		parts = append(parts, fmt.Sprintf("type=%s", authType))
 	}
 
 	return strings.Join(parts, ", ")

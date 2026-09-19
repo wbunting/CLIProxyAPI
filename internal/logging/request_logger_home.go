@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 )
 
 type homeRequestLogClient interface {
@@ -48,6 +49,16 @@ func cloneHeaders(headers map[string][]string) map[string][]string {
 	return out
 }
 
+func cloneRequestLogHeaders(headers map[string][]string) map[string][]string {
+	out := cloneHeaders(headers)
+	for key, values := range out {
+		for i, value := range values {
+			values[i] = util.RedactRequestLogHeaderValue(key, value)
+		}
+	}
+	return out
+}
+
 func (l *FileRequestLogger) forwardRequestLogToHome(ctx context.Context, headers map[string][]string, requestID string, logText string) error {
 	if l == nil || !l.homeEnabled {
 		return nil
@@ -57,7 +68,7 @@ func (l *FileRequestLogger) forwardRequestLogToHome(ctx context.Context, headers
 		return nil
 	}
 	payload := homeRequestLogPayload{
-		Headers:    cloneHeaders(headers),
+		Headers:    cloneRequestLogHeaders(headers),
 		RequestID:  strings.TrimSpace(requestID),
 		RequestLog: logText,
 	}
@@ -234,7 +245,7 @@ func (w *homeStreamingLogWriter) Close() error {
 	}
 
 	payload := homeRequestLogPayload{
-		Headers:    cloneHeaders(w.requestHeaders),
+		Headers:    cloneRequestLogHeaders(w.requestHeaders),
 		RequestID:  w.requestID,
 		RequestLog: buf.String(),
 	}

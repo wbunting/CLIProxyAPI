@@ -91,8 +91,10 @@ func TestFileRequestLogger_HomeEnabled_ForwardsWhenRequestLogEnabled(t *testing.
 	logger.SetHomeEnabled(true)
 
 	requestHeaders := map[string][]string{
-		"Content-Type":  {"application/json"},
-		"Authorization": {"Bearer secret"},
+		"Content-Type":        {"application/json"},
+		"Authorization":       {"Bearer secret"},
+		"Proxy-Authorization": {"Basic proxy-secret"},
+		"Cookie":              {"session=one", "refresh=two"},
 	}
 
 	errLog := logger.LogRequest(
@@ -139,8 +141,19 @@ func TestFileRequestLogger_HomeEnabled_ForwardsWhenRequestLogEnabled(t *testing.
 	if got.Headers == nil || got.Headers["Content-Type"][0] != "application/json" {
 		t.Fatalf("headers.content-type = %+v, want application/json", got.Headers["Content-Type"])
 	}
-	if got.Headers == nil || got.Headers["Authorization"][0] != "Bearer secret" {
-		t.Fatalf("headers.authorization = %+v, want Bearer secret", got.Headers["Authorization"])
+	if got.Headers == nil || got.Headers["Authorization"][0] != "[REDACTED]" {
+		t.Fatalf("headers.authorization = %+v, want redacted", got.Headers["Authorization"])
+	}
+	if got.Headers == nil || got.Headers["Proxy-Authorization"][0] != "[REDACTED]" {
+		t.Fatalf("headers.proxy-authorization = %+v, want redacted", got.Headers["Proxy-Authorization"])
+	}
+	if got.Headers == nil || len(got.Headers["Cookie"]) != 2 || got.Headers["Cookie"][0] != "[REDACTED]" || got.Headers["Cookie"][1] != "[REDACTED]" {
+		t.Fatalf("headers.cookie = %+v, want two redacted values", got.Headers["Cookie"])
+	}
+	for _, secret := range []string{"Bearer secret", "Basic proxy-secret", "session=one", "refresh=two"} {
+		if strings.Contains(string(stub.pushed[0]), secret) {
+			t.Fatalf("home request log payload leaked %q: %s", secret, string(stub.pushed[0]))
+		}
 	}
 	if got.RequestID != "req-1" {
 		t.Fatalf("request_id = %q, want req-1", got.RequestID)
@@ -314,7 +327,11 @@ func TestFileRequestLogger_HomeEnabled_ForwardsStreamingRequestID(t *testing.T) 
 	writer, errLog := logger.LogStreamingRequest(
 		"/v1/responses",
 		http.MethodPost,
-		map[string][]string{"Content-Type": {"application/json"}},
+		map[string][]string{
+			"Content-Type":  {"application/json"},
+			"Authorization": {"Bearer streaming-secret"},
+			"Cookie":        {"stream-session=one", "stream-refresh=two"},
+		},
 		[]byte(`{"input":"hello"}`),
 		"stream-req-1",
 	)
@@ -322,7 +339,10 @@ func TestFileRequestLogger_HomeEnabled_ForwardsStreamingRequestID(t *testing.T) 
 		t.Fatalf("LogStreamingRequest error: %v", errLog)
 	}
 
-	if errStatus := writer.WriteStatus(http.StatusOK, map[string][]string{"Content-Type": {"text/event-stream"}}); errStatus != nil {
+	if errStatus := writer.WriteStatus(http.StatusOK, map[string][]string{
+		"Content-Type": {"text/event-stream"},
+		"Set-Cookie":   {"response-session=one", "response-refresh=two"},
+	}); errStatus != nil {
 		t.Fatalf("WriteStatus error: %v", errStatus)
 	}
 	writer.WriteChunkAsync([]byte("data: ok\n\n"))
@@ -335,8 +355,9 @@ func TestFileRequestLogger_HomeEnabled_ForwardsStreamingRequestID(t *testing.T) 
 	}
 
 	var got struct {
-		RequestID  string `json:"request_id"`
-		RequestLog string `json:"request_log"`
+		Headers    map[string][]string `json:"headers"`
+		RequestID  string              `json:"request_id"`
+		RequestLog string              `json:"request_log"`
 	}
 	if errUnmarshal := json.Unmarshal(stub.pushed[0], &got); errUnmarshal != nil {
 		t.Fatalf("unmarshal payload: %v payload=%s", errUnmarshal, string(stub.pushed[0]))
@@ -346,6 +367,20 @@ func TestFileRequestLogger_HomeEnabled_ForwardsStreamingRequestID(t *testing.T) 
 	}
 	if got.RequestLog == "" {
 		t.Fatalf("request_log empty, want non-empty")
+	}
+	if values := got.Headers["Authorization"]; len(values) != 1 || values[0] != "[REDACTED]" {
+		t.Fatalf("headers.authorization = %+v, want redacted", values)
+	}
+	if values := got.Headers["Cookie"]; len(values) != 2 || values[0] != "[REDACTED]" || values[1] != "[REDACTED]" {
+		t.Fatalf("headers.cookie = %+v, want two redacted values", values)
+	}
+	if strings.Count(got.RequestLog, "Set-Cookie: [REDACTED]") != 2 {
+		t.Fatalf("streaming request log did not redact both Set-Cookie values: %s", got.RequestLog)
+	}
+	for _, secret := range []string{"streaming-secret", "stream-session=one", "stream-refresh=two", "response-session=one", "response-refresh=two"} {
+		if strings.Contains(string(stub.pushed[0]), secret) {
+			t.Fatalf("home streaming request log payload leaked %q: %s", secret, string(stub.pushed[0]))
+		}
 	}
 }
 
