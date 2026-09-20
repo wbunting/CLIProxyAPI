@@ -189,10 +189,10 @@ func buildModelRouteViews(cfg *config.Config, auths []*coreauth.Auth, usage map[
 func buildModelRouteMember(provider, model, alias string, priority int, auths []*coreauth.Auth, usage map[string]routeUsageStats, now time.Time) modelRouteMember {
 	member := modelRouteMember{Provider: strings.ToLower(strings.TrimSpace(provider)), Model: strings.TrimSpace(model), Priority: priority}
 	matching := matchingRouteAuths(member.Provider, auths)
-	member.Available = len(matching) == 0
-	var bestRemaining float64
+	member.Available = false
+	var remainingTotal float64
+	var remainingCount int
 	var resetAt time.Time
-	quotaKnown := false
 	for _, auth := range matching {
 		if auth == nil || auth.Disabled || auth.Status == coreauth.StatusDisabled {
 			continue
@@ -201,20 +201,16 @@ func buildModelRouteMember(provider, model, alias string, priority int, auths []
 		if state := auth.ModelStates[member.Model]; state != nil {
 			blocked = blocked || state.Unavailable && (state.NextRetryAfter.IsZero() || state.NextRetryAfter.After(now))
 			if remaining, reset, ok := quotaRemainingForModel(member.Provider, member.Model, state.Quota.Signals); ok {
-				if !quotaKnown || remaining > bestRemaining {
-					bestRemaining = remaining
-				}
-				quotaKnown = true
+				remainingTotal += remaining
+				remainingCount++
 				if !reset.IsZero() && (resetAt.IsZero() || reset.Before(resetAt)) {
 					resetAt = reset
 				}
 			}
 		}
 		if remaining, reset, ok := quotaRemainingForModel(member.Provider, member.Model, auth.Quota.Signals); ok {
-			if !quotaKnown || remaining > bestRemaining {
-				bestRemaining = remaining
-			}
-			quotaKnown = true
+			remainingTotal += remaining
+			remainingCount++
 			if !reset.IsZero() && (resetAt.IsZero() || reset.Before(resetAt)) {
 				resetAt = reset
 			}
@@ -223,8 +219,10 @@ func buildModelRouteMember(provider, model, alias string, priority int, auths []
 			member.Available = true
 		}
 	}
-	member.QuotaKnown = quotaKnown
-	member.QuotaRemaining = bestRemaining
+	member.QuotaKnown = remainingCount > 0
+	if remainingCount > 0 {
+		member.QuotaRemaining = remainingTotal / float64(remainingCount)
+	}
 	if !resetAt.IsZero() {
 		member.ResetAt = resetAt.UTC().Format(time.RFC3339)
 	}
