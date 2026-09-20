@@ -1,10 +1,13 @@
 package management
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,6 +28,7 @@ type modelRouteMember struct {
 	Available      bool    `json:"available"`
 	QuotaRemaining float64 `json:"quota_remaining,omitempty"`
 	QuotaKnown     bool    `json:"quota_known"`
+	QuotaCapacity  float64 `json:"quota_capacity,omitempty"`
 	ResetAt        string  `json:"reset_at,omitempty"`
 	LastUsedAt     string  `json:"last_used_at,omitempty"`
 	Requests       int     `json:"requests"`
@@ -43,6 +47,18 @@ type modelRouteView struct {
 	AggregateRemaining      float64            `json:"aggregate_remaining,omitempty"`
 	AggregateRemainingKnown bool               `json:"aggregate_remaining_known"`
 	ObservedAt              string             `json:"observed_at"`
+}
+
+type routeQuotaObservation struct {
+	Remaining float64
+	Capacity  float64
+	ResetAt   time.Time
+}
+
+type claudeOAuthProfile struct {
+	Organization struct {
+		RateLimitTier string `json:"rate_limit_tier"`
+	} `json:"organization"`
 }
 
 type routeUsageStats struct {
@@ -93,6 +109,7 @@ func (h *Handler) GetModelRoutes(c *gin.Context) {
 	if manager != nil {
 		auths = manager.List()
 	}
+	populateClaudeRouteCapacity(c.Request.Context(), h, auths)
 	usage := collectModelRouteUsage(redisqueue.SnapshotNewest(modelRouteUsageSnapshotLimit))
 	routes := buildModelRouteViews(cfg, auths, usage, now)
 	c.JSON(http.StatusOK, gin.H{"observed_at": now, "routes": routes})
@@ -153,13 +170,13 @@ func buildModelRouteViews(cfg *config.Config, auths []*coreauth.Auth, usage map[
 			}
 			return view.Members[i].Model < view.Members[j].Model
 		})
-		known := 0
-		total := 0.0
+		knownCapacity := 0.0
+		remainingCapacity := 0.0
 		for i := range view.Members {
 			member := view.Members[i]
-			if member.QuotaKnown {
-				known++
-				total += member.QuotaRemaining
+			if member.QuotaKnown && member.QuotaCapacity > 0 {
+				knownCapacity += member.QuotaCapacity
+				remainingCapacity += member.QuotaRemaining * member.QuotaCapacity
 			}
 			if view.Active == nil && member.Available {
 				copyMember := member
@@ -171,8 +188,8 @@ func buildModelRouteViews(cfg *config.Config, auths []*coreauth.Auth, usage map[
 				view.Next = &copyMember
 			}
 		}
-		if known > 0 {
-			view.AggregateRemaining = total / float64(known)
+		if knownCapacity > 0 {
+			view.AggregateRemaining = remainingCapacity / knownCapacity
 			view.AggregateRemainingKnown = true
 		}
 		out = append(out, *view)
@@ -190,38 +207,38 @@ func buildModelRouteMember(provider, model, alias string, priority int, auths []
 	member := modelRouteMember{Provider: strings.ToLower(strings.TrimSpace(provider)), Model: strings.TrimSpace(model), Priority: priority}
 	matching := matchingRouteAuths(member.Provider, auths)
 	member.Available = false
-	var remainingTotal float64
-	var remainingCount int
+	var remainingCapacity float64
+	var totalCapacity float64
 	var resetAt time.Time
 	for _, auth := range matching {
 		if auth == nil || auth.Disabled || auth.Status == coreauth.StatusDisabled {
 			continue
 		}
 		blocked := auth.Unavailable && auth.NextRetryAfter.After(now)
+		var observation routeQuotaObservation
+		var known bool
 		if state := auth.ModelStates[member.Model]; state != nil {
 			blocked = blocked || state.Unavailable && (state.NextRetryAfter.IsZero() || state.NextRetryAfter.After(now))
-			if remaining, reset, ok := quotaRemainingForModel(member.Provider, member.Model, state.Quota.Signals); ok {
-				remainingTotal += remaining
-				remainingCount++
-				if !reset.IsZero() && (resetAt.IsZero() || reset.Before(resetAt)) {
-					resetAt = reset
-				}
-			}
+			observation, known = quotaObservationForModel(member.Provider, member.Model, state.Quota.Signals, auth)
 		}
-		if remaining, reset, ok := quotaRemainingForModel(member.Provider, member.Model, auth.Quota.Signals); ok {
-			remainingTotal += remaining
-			remainingCount++
-			if !reset.IsZero() && (resetAt.IsZero() || reset.Before(resetAt)) {
-				resetAt = reset
+		if !known {
+			observation, known = quotaObservationForModel(member.Provider, member.Model, auth.Quota.Signals, auth)
+		}
+		if known {
+			remainingCapacity += observation.Remaining * observation.Capacity
+			totalCapacity += observation.Capacity
+			if !observation.ResetAt.IsZero() && (resetAt.IsZero() || observation.ResetAt.Before(resetAt)) {
+				resetAt = observation.ResetAt
 			}
 		}
 		if !blocked {
 			member.Available = true
 		}
 	}
-	member.QuotaKnown = remainingCount > 0
-	if remainingCount > 0 {
-		member.QuotaRemaining = remainingTotal / float64(remainingCount)
+	member.QuotaKnown = totalCapacity > 0
+	if totalCapacity > 0 {
+		member.QuotaRemaining = remainingCapacity / totalCapacity
+		member.QuotaCapacity = totalCapacity
 	}
 	if !resetAt.IsZero() {
 		member.ResetAt = resetAt.UTC().Format(time.RFC3339)
@@ -265,7 +282,7 @@ func matchingRouteAuths(provider string, auths []*coreauth.Auth) []*coreauth.Aut
 	return out
 }
 
-func quotaRemainingForModel(provider, model string, signals map[string]string) (float64, time.Time, bool) {
+func quotaObservationForModel(provider, model string, signals map[string]string, auth *coreauth.Auth) (routeQuotaObservation, bool) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "claude" {
 		remaining := []float64{}
@@ -287,7 +304,7 @@ func quotaRemainingForModel(provider, model string, signals map[string]string) (
 			}
 		}
 		if len(remaining) > 0 {
-			return minimum(remaining), earliestTime(resets), true
+			return routeQuotaObservation{Remaining: minimum(remaining), Capacity: claudePlanCapacity(auth), ResetAt: earliestTime(resets)}, true
 		}
 	}
 	if provider == "codex" {
@@ -307,10 +324,100 @@ func quotaRemainingForModel(provider, model string, signals map[string]string) (
 			}
 		}
 		if len(remaining) > 0 {
-			return minimum(remaining), earliestTime(resets), true
+			return routeQuotaObservation{Remaining: minimum(remaining), Capacity: 1, ResetAt: earliestTime(resets)}, true
 		}
 	}
-	return 0, time.Time{}, false
+	return routeQuotaObservation{}, false
+}
+
+func claudePlanCapacity(auth *coreauth.Auth) float64 {
+	if auth == nil {
+		return 1
+	}
+	tier := ""
+	if auth.Attributes != nil {
+		tier = auth.Attributes["rate_limit_tier"]
+	}
+	if tier == "" && auth.Metadata != nil {
+		if value, ok := auth.Metadata["rate_limit_tier"].(string); ok {
+			tier = value
+		}
+	}
+	normalized := strings.ToLower(strings.TrimSpace(tier))
+	switch {
+	case strings.Contains(normalized, "20x"):
+		return 20
+	case strings.Contains(normalized, "5x"):
+		return 5
+	default:
+		return 1
+	}
+}
+
+func populateClaudeRouteCapacity(ctx context.Context, handler *Handler, auths []*coreauth.Auth) {
+	if handler == nil {
+		return
+	}
+	for _, auth := range auths {
+		if auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "claude") {
+			continue
+		}
+		if auth.Attributes == nil {
+			auth.Attributes = make(map[string]string)
+		}
+		handler.mu.Lock()
+		cachedTier := strings.TrimSpace(handler.claudePlanTiers[auth.ID])
+		handler.mu.Unlock()
+		if cachedTier != "" {
+			auth.Attributes["rate_limit_tier"] = cachedTier
+			continue
+		}
+		if strings.TrimSpace(auth.Attributes["rate_limit_tier"]) != "" {
+			continue
+		}
+		profile, errProfile := fetchClaudeOAuthProfile(ctx, handler, auth)
+		if errProfile != nil {
+			continue
+		}
+		tier := strings.TrimSpace(profile.Organization.RateLimitTier)
+		if tier == "" {
+			continue
+		}
+		auth.Attributes["rate_limit_tier"] = tier
+		handler.mu.Lock()
+		handler.claudePlanTiers[auth.ID] = tier
+		handler.mu.Unlock()
+	}
+}
+
+func fetchClaudeOAuthProfile(ctx context.Context, handler *Handler, auth *coreauth.Auth) (*claudeOAuthProfile, error) {
+	token, errToken := handler.resolveTokenForAuth(ctx, auth, "")
+	if errToken != nil || strings.TrimSpace(token) == "" {
+		return nil, errToken
+	}
+	profileURL, _ := url.Parse("https://api.anthropic.com/api/oauth/profile")
+	req, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, profileURL.String(), nil)
+	if errRequest != nil {
+		return nil, errRequest
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	client := &http.Client{Timeout: 10 * time.Second, Transport: handler.apiCallTransport(auth, "")}
+	resp, errDo := client.Do(req)
+	if errDo != nil {
+		return nil, errDo
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return nil, &url.Error{Op: http.MethodGet, URL: profileURL.String(), Err: http.ErrNotSupported}
+	}
+	var profile claudeOAuthProfile
+	if errDecode := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&profile); errDecode != nil {
+		return nil, errDecode
+	}
+	return &profile, nil
 }
 
 func signalFloat(signals map[string]string, name string) (float64, bool) {

@@ -53,6 +53,7 @@ type Handler struct {
 	allowRemoteOverride     bool
 	envSecret               string
 	logDir                  string
+	claudePlanTiers         map[string]string
 	postAuthHook            coreauth.PostAuthHook
 	postAuthPersistHook     coreauth.PostAuthHook
 	pluginHost              *pluginhost.Host
@@ -81,6 +82,7 @@ func NewHandler(cfg *config.Config, configFilePath string, manager *coreauth.Man
 		tokenStore:          sdkAuth.GetTokenStore(),
 		allowRemoteOverride: envSecret != "",
 		envSecret:           envSecret,
+		claudePlanTiers:     make(map[string]string),
 	}
 	h.startAttemptCleanup()
 	return h

@@ -3,6 +3,7 @@ package management
 import (
 	"encoding/base64"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -78,6 +79,55 @@ func TestGetModelRoutesOrdersMembersAndAggregatesUsage(t *testing.T) {
 			t.Fatalf("active usage = %#v", route.Active)
 		}
 	})
+}
+
+func TestModelRouteQuotaWeightsClaudeMaxPlansByCapacity(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	for _, auth := range []*coreauth.Auth{
+		{
+			ID:         "claude-max-5x",
+			Provider:   "claude",
+			Status:     coreauth.StatusActive,
+			Attributes: map[string]string{"rate_limit_tier": "default_claude_max_5x"},
+			Quota: coreauth.QuotaState{Signals: map[string]string{
+				"Anthropic-Ratelimit-Unified-5h-Utilization": "0.20",
+				"Anthropic-Ratelimit-Unified-7d-Utilization": "0.27",
+			}},
+		},
+		{
+			ID:         "claude-max-20x",
+			Provider:   "claude",
+			Status:     coreauth.StatusActive,
+			Attributes: map[string]string{"rate_limit_tier": "default_claude_max_20x"},
+			Quota: coreauth.QuotaState{Signals: map[string]string{
+				"Anthropic-Ratelimit-Unified-5h-Utilization": "0.05",
+				"Anthropic-Ratelimit-Unified-7d-Utilization": "0.71",
+			}},
+		},
+	} {
+		if _, errRegister := manager.Register(t.Context(), auth); errRegister != nil {
+			t.Fatal(errRegister)
+		}
+	}
+	cfg := &config.Config{OAuthModelAlias: map[string][]config.OAuthModelAlias{
+		"claude": {{Name: "claude-opus-5", Alias: "tier-deep", Priority: modelRoutePriority(100)}},
+	}}
+	routes := buildModelRouteViews(cfg, manager.List(), nil, time.Now())
+	if len(routes) != 1 || len(routes[0].Members) != 1 {
+		t.Fatalf("routes = %#v", routes)
+	}
+	member := routes[0].Members[0]
+	// The 5x account has 73%% remaining and the 20x account has 29%% remaining.
+	// Capacity weighting is (5*0.73 + 20*0.29) / 25 = 0.378, not 0.51.
+	if math.Abs(member.QuotaRemaining-0.378) > 0.000001 {
+		t.Fatalf("member quota = %f, want 0.378", member.QuotaRemaining)
+	}
+	if member.QuotaCapacity != 25 {
+		t.Fatalf("member capacity = %f, want 25", member.QuotaCapacity)
+	}
+	if math.Abs(routes[0].AggregateRemaining-0.378) > 0.000001 {
+		t.Fatalf("aggregate quota = %f, want 0.378", routes[0].AggregateRemaining)
+	}
 }
 
 func TestGetModelRoutesSkipsUnavailablePreferredMember(t *testing.T) {
