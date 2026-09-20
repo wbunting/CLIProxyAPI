@@ -860,6 +860,28 @@ nonstream-keepalive-interval: 0
 #   #     display-name: "Frontier Tier"
 #   #     priority: 50
 #   #     fork: true
+#
+#   # Role aliases use the same mechanism, but describe the job rather than capability.
+#   # The orchestrator selects a role alias; this router owns model membership, preference,
+#   # quota-aware fallback, and session affinity. Concrete model IDs remain selectable.
+#   # xai:
+#   #   - name: "grok-4.6"
+#   #     alias: "role-reviewer"
+#   #     display-name: "Reviewer Role"
+#   #     priority: 100
+#   #     fork: true
+#   # claude:
+#   #   - name: "claude-fable-5-1"
+#   #     alias: "role-reviewer"
+#   #     display-name: "Reviewer Role"
+#   #     priority: 75
+#   #     fork: true
+#   # codex:
+#   #   - name: "gpt-5.6-sol"
+#   #     alias: "role-reviewer"
+#   #     display-name: "Reviewer Role"
+#   #     priority: 50
+#   #     fork: true
 #   kimi:
 #     - name: "kimi-k2.5"
 #       alias: "k2.5"
