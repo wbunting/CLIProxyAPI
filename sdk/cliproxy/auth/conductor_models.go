@@ -133,6 +133,31 @@ func (m *Manager) resolveOpenAICompatUpstreamModelPool(auth *Auth, requestedMode
 	return resolveOpenAICompatUpstreamModelPool(m.loadAPIKeyModelRouting().config, auth, requestedModel)
 }
 
+func openAICompatModelPoolHasPriority(cfg *internalconfig.Config, auth *Auth, requestedModel string) bool {
+	if !isConfiguredOpenAICompatAuth(auth) || cfg == nil {
+		return false
+	}
+	providerKey := ""
+	compatName := ""
+	if auth.Attributes != nil {
+		providerKey = strings.TrimSpace(auth.Attributes["provider_key"])
+		compatName = strings.TrimSpace(auth.Attributes["compat_name"])
+	}
+	entry := resolveOpenAICompatConfigForAuth(cfg, auth, providerKey, compatName)
+	if entry == nil {
+		return false
+	}
+	_, candidates := modelAliasLookupCandidates(requestedModel)
+	for _, candidate := range candidates {
+		for i := range entry.Models {
+			if entry.Models[i].Priority != nil && strings.EqualFold(strings.TrimSpace(entry.Models[i].Alias), strings.TrimSpace(candidate)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func resolveOpenAICompatUpstreamModelPool(cfg *internalconfig.Config, auth *Auth, requestedModel string) []string {
 	if !isConfiguredOpenAICompatAuth(auth) {
 		return nil
@@ -170,7 +195,7 @@ func (m *Manager) executionModelCandidates(auth *Auth, routeModel string) []stri
 	requestedModel := rewriteModelForAuth(routeModel, auth)
 	requestedModel = m.applyOAuthModelAlias(auth, requestedModel)
 	if pool := m.resolveOpenAICompatUpstreamModelPool(auth, requestedModel); len(pool) > 0 {
-		if len(pool) == 1 {
+		if len(pool) == 1 || openAICompatModelPoolHasPriority(m.loadAPIKeyModelRouting().config, auth, requestedModel) {
 			return pool
 		}
 		offset := m.nextModelPoolOffset(openAICompatModelPoolKey(auth, requestedModel), len(pool))
@@ -345,7 +370,7 @@ func (m *Manager) executionModelCandidatesWithAlias(auth *Auth, routeModel strin
 	}
 	if len(candidates) == 0 {
 		if pool := resolveOpenAICompatUpstreamModelPool(routing.config, auth, upstreamModel); len(pool) > 0 {
-			if len(pool) == 1 {
+			if len(pool) == 1 || openAICompatModelPoolHasPriority(routing.config, auth, upstreamModel) {
 				candidates = pool
 			} else {
 				offset := m.nextModelPoolOffset(openAICompatModelPoolKey(auth, upstreamModel), len(pool))
@@ -439,6 +464,33 @@ func resolveAPIKeyModelAliasWithResult(cfg *internalconfig.Config, auth *Auth, r
 		return OAuthModelAliasResult{UpstreamModel: requestedModel}
 	}
 	return result
+}
+
+func (m *Manager) routeModelAliasPriority(auth *Auth, requestedModel string) int {
+	if priority := m.oauthModelAliasPriority(auth, requestedModel); priority != 0 {
+		return priority
+	}
+	cfg := m.loadAPIKeyModelRouting().config
+	entries := configuredModelAliasEntries(cfg, auth)
+	_, candidates := modelAliasLookupCandidates(requestedModel)
+	best := 0
+	found := false
+	for _, candidate := range candidates {
+		for _, entry := range entries {
+			if !strings.EqualFold(strings.TrimSpace(entry.GetAlias()), strings.TrimSpace(candidate)) {
+				continue
+			}
+			priority := 0
+			if configured := entry.GetPriority(); configured != nil {
+				priority = *configured
+			}
+			if !found || priority > best {
+				best = priority
+				found = true
+			}
+		}
+	}
+	return best
 }
 
 func configuredModelAliasEntries(cfg *internalconfig.Config, auth *Auth) []modelAliasEntry {
@@ -995,6 +1047,7 @@ func asModelAliasEntries[T interface {
 	GetName() string
 	GetAlias() string
 	GetForceMapping() bool
+	GetPriority() *int
 }](models []T) []modelAliasEntry {
 	if len(models) == 0 {
 		return nil

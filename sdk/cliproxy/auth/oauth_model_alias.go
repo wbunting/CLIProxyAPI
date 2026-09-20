@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -14,6 +15,7 @@ type modelAliasEntry interface {
 	GetName() string
 	GetAlias() string
 	GetForceMapping() bool
+	GetPriority() *int
 }
 
 // oauthModelAliasEntry stores the upstream model name and mapping flags for an alias.
@@ -208,8 +210,13 @@ func resolveModelAliasPoolFromConfigModels(requestedModel string, models []model
 		return nil
 	}
 
+	type poolEntry struct {
+		model    string
+		priority int
+		order    int
+	}
 	for _, candidate := range candidates {
-		out := make([]string, 0)
+		entries := make([]poolEntry, 0)
 		seen := make(map[string]struct{})
 		for i := range models {
 			name := strings.TrimSpace(models[i].GetName())
@@ -230,9 +237,23 @@ func resolveModelAliasPoolFromConfigModels(requestedModel string, models []model
 				continue
 			}
 			seen[key] = struct{}{}
-			out = append(out, resolved)
+			priority := 0
+			if configured := models[i].GetPriority(); configured != nil {
+				priority = *configured
+			}
+			entries = append(entries, poolEntry{model: resolved, priority: priority, order: i})
 		}
-		if len(out) > 0 {
+		if len(entries) > 0 {
+			sort.SliceStable(entries, func(i, j int) bool {
+				if entries[i].priority != entries[j].priority {
+					return entries[i].priority > entries[j].priority
+				}
+				return entries[i].order < entries[j].order
+			})
+			out := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				out = append(out, entry.model)
+			}
 			return out
 		}
 	}

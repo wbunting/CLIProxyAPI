@@ -165,6 +165,11 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 		e.Prefix = normalizeModelPrefix(e.Prefix)
 		e.BaseURL = strings.TrimSpace(e.BaseURL)
 		e.Headers = NormalizeHeaders(e.Headers)
+		for modelIndex := range e.Models {
+			e.Models[modelIndex].Name = strings.TrimSpace(e.Models[modelIndex].Name)
+			e.Models[modelIndex].Alias = strings.TrimSpace(e.Models[modelIndex].Alias)
+			e.Models[modelIndex].DisplayName = strings.TrimSpace(e.Models[modelIndex].DisplayName)
+		}
 		if e.BaseURL == "" {
 			// Skip providers with no base-url; treated as removed
 			continue

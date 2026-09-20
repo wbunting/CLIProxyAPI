@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -261,6 +262,20 @@ func TestResolveModelAliasPoolFromConfigModels(t *testing.T) {
 	}
 }
 
+func TestResolveModelAliasPoolOrdersConfiguredPriorities(t *testing.T) {
+	high, medium, low := 100, 50, 10
+	models := []modelAliasEntry{
+		internalconfig.OpenAICompatibilityModel{Name: "low", Alias: "role-researcher", Priority: &low},
+		internalconfig.OpenAICompatibilityModel{Name: "high", Alias: "role-researcher", Priority: &high},
+		internalconfig.OpenAICompatibilityModel{Name: "medium", Alias: "role-researcher", Priority: &medium},
+	}
+	got := resolveModelAliasPoolFromConfigModels("role-researcher(max)", models)
+	want := []string{"high(max)", "medium(max)", "low(max)"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("priority pool = %v, want %v", got, want)
+	}
+}
+
 func TestResolveModelAliasPoolPrefersExactSuffixedAlias(t *testing.T) {
 	models := []modelAliasEntry{
 		internalconfig.OpenAICompatibilityModel{Name: "base-model", Alias: "public"},
@@ -303,6 +318,27 @@ func TestManagerExecute_OpenAICompatAliasPoolRotatesWithinAuth(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("execute call %d model = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestManagerExecute_OpenAICompatAliasPoolPriorityKeepsPreferredFirst(t *testing.T) {
+	alias := "role-researcher"
+	high, low := 100, 50
+	executor := &openAICompatPoolExecutor{id: openAICompatPoolProviderKey}
+	m := newOpenAICompatPoolTestManager(t, alias, []internalconfig.OpenAICompatibilityModel{
+		{Name: "low-model", Alias: alias, Priority: &low},
+		{Name: "high-model", Alias: alias, Priority: &high},
+	}, executor)
+
+	for i := 0; i < 2; i++ {
+		if _, err := m.Execute(context.Background(), []string{openAICompatPoolProviderKey}, cliproxyexecutor.Request{Model: alias}, cliproxyexecutor.Options{}); err != nil {
+			t.Fatalf("execute %d: %v", i, err)
+		}
+	}
+	got := executor.ExecuteModels()
+	want := []string{"high-model", "high-model"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("execute calls = %v, want %v", got, want)
 	}
 }
 

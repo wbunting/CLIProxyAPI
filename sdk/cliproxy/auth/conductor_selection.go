@@ -531,7 +531,7 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 		checkModel := m.selectionModelForAuth(candidate, routeModel)
 		blocked, reason, next := isAuthBlockedForModel(candidate, checkModel, now)
 		if !blocked {
-			priority := effectiveAuthPriority(candidate, m.oauthModelAliasPriority(candidate, routeModel))
+			priority := effectiveAuthPriority(candidate, m.routeModelAliasPriority(candidate, routeModel))
 			if priority != authPriority(candidate) {
 				candidate = candidate.Clone()
 				if candidate.Attributes == nil {

@@ -554,6 +554,10 @@ type ClaudeModel struct {
 	// ForceMapping rewrites upstream response model fields back to Alias.
 	ForceMapping bool `yaml:"force-mapping,omitempty" json:"force-mapping,omitempty"`
 
+	// Priority controls preference when multiple upstream models share Alias.
+	// Higher values are tried first; equal priorities rotate round-robin.
+	Priority *int `yaml:"priority,omitempty" json:"priority,omitempty"`
+
 	// IsCompat preserves thinking blocks with empty signatures for compatible upstreams
 	// and enables provider-aware signed-thinking replay for Claude-compatible API-key models.
 	// Default false keeps the normal signature validation behavior.
@@ -570,6 +574,7 @@ func (m ClaudeModel) GetAlias() string { return m.Alias }
 func (m ClaudeModel) GetDisplayName() string   { return m.DisplayName }
 func (m ClaudeModel) GetMaxContextLength() int { return m.MaxContextLength }
 func (m ClaudeModel) GetForceMapping() bool    { return m.ForceMapping }
+func (m ClaudeModel) GetPriority() *int        { return m.Priority }
 func (m ClaudeModel) GetIsCompat() bool        { return m.IsCompat }
 
 func (m ClaudeModel) GetThinking() *registry.ThinkingSupport { return m.Thinking }
@@ -650,6 +655,10 @@ type CodexModel struct {
 	// ForceMapping rewrites upstream response model fields back to Alias.
 	ForceMapping bool `yaml:"force-mapping,omitempty" json:"force-mapping,omitempty"`
 
+	// Priority controls preference when multiple upstream models share Alias.
+	// Higher values are tried first; equal priorities rotate round-robin.
+	Priority *int `yaml:"priority,omitempty" json:"priority,omitempty"`
+
 	// IsCompat converts Codex MultiAgentV2 agent_message items into portable
 	// Responses message/user input when codex.optimize-multi-agent-v2 is also true.
 	// Use this for third-party Responses-compatible endpoints that do not accept
@@ -668,6 +677,7 @@ func (m CodexModel) GetAlias() string { return m.Alias }
 func (m CodexModel) GetDisplayName() string   { return m.DisplayName }
 func (m CodexModel) GetMaxContextLength() int { return m.MaxContextLength }
 func (m CodexModel) GetForceMapping() bool    { return m.ForceMapping }
+func (m CodexModel) GetPriority() *int        { return m.Priority }
 func (m CodexModel) GetIsCompat() bool        { return m.IsCompat }
 
 func (m CodexModel) GetThinking() *registry.ThinkingSupport { return m.Thinking }
@@ -753,6 +763,10 @@ type GeminiModel struct {
 	// ForceMapping rewrites upstream response model fields back to Alias.
 	ForceMapping bool `yaml:"force-mapping,omitempty" json:"force-mapping,omitempty"`
 
+	// Priority controls preference when multiple upstream models share Alias.
+	// Higher values are tried first; equal priorities rotate round-robin.
+	Priority *int `yaml:"priority,omitempty" json:"priority,omitempty"`
+
 	// IsCompat preserves thinking blocks with empty signatures for compatible upstreams.
 	// Default false keeps the normal signature validation behavior.
 	IsCompat bool `yaml:"is-compat,omitempty" json:"is-compat,omitempty"`
@@ -768,6 +782,7 @@ func (m GeminiModel) GetAlias() string { return m.Alias }
 func (m GeminiModel) GetDisplayName() string   { return m.DisplayName }
 func (m GeminiModel) GetMaxContextLength() int { return m.MaxContextLength }
 func (m GeminiModel) GetForceMapping() bool    { return m.ForceMapping }
+func (m GeminiModel) GetPriority() *int        { return m.Priority }
 func (m GeminiModel) GetIsCompat() bool        { return m.IsCompat }
 
 func (m GeminiModel) GetThinking() *registry.ThinkingSupport { return m.Thinking }
@@ -858,6 +873,10 @@ type OpenAICompatibilityModel struct {
 	// ForceMapping rewrites upstream response model fields back to Alias.
 	ForceMapping bool `yaml:"force-mapping,omitempty" json:"force-mapping,omitempty"`
 
+	// Priority controls preference when multiple upstream models share Alias.
+	// Higher values are tried first; equal priorities rotate round-robin.
+	Priority *int `yaml:"priority,omitempty" json:"priority,omitempty"`
+
 	// Image marks this model as callable through /v1/images/generations and /v1/images/edits.
 	Image bool `yaml:"image,omitempty" json:"image,omitempty"`
 
@@ -884,6 +903,7 @@ func (m OpenAICompatibilityModel) GetAlias() string { return m.Alias }
 func (m OpenAICompatibilityModel) GetDisplayName() string   { return m.DisplayName }
 func (m OpenAICompatibilityModel) GetMaxContextLength() int { return m.MaxContextLength }
 func (m OpenAICompatibilityModel) GetForceMapping() bool    { return m.ForceMapping }
+func (m OpenAICompatibilityModel) GetPriority() *int        { return m.Priority }
 func (m OpenAICompatibilityModel) GetIsCompat() bool        { return m.IsCompat }
 
 func (m OpenAICompatibilityModel) GetThinking() *registry.ThinkingSupport { return m.Thinking }
