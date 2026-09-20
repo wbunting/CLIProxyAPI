@@ -376,6 +376,10 @@ func authPriority(auth *Auth) int {
 	return parsed
 }
 
+func effectiveAuthPriority(auth *Auth, routePriority int) int {
+	return authPriority(auth) + routePriority
+}
+
 func authWeight(auth *Auth) int64 {
 	if auth == nil {
 		return credentialweight.Default

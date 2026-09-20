@@ -376,6 +376,11 @@ type OAuthModelAlias struct {
 	// DisplayName is the optional human-readable name shown in model catalogs.
 	DisplayName string `yaml:"display-name,omitempty" json:"display-name,omitempty"`
 
+	// Priority controls route-local preference when several providers expose the same alias.
+	// Higher values are preferred. It is added to the selected credential's priority and does
+	// not affect requests that explicitly select Name instead of Alias.
+	Priority *int `yaml:"priority,omitempty" json:"priority,omitempty"`
+
 	ForceMapping bool `yaml:"force-mapping,omitempty" json:"force-mapping,omitempty"`
 }
 

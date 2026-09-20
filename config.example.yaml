@@ -811,6 +811,7 @@ nonstream-keepalive-interval: 0
 # Optional per-entry fields:
 #   fork: true                  # keep the upstream model and also expose the alias as a separate client-visible model
 #   display-name: "Model Name" # override the human-readable name shown in model catalogs
+#   priority: 100               # route-local preference when providers share this alias; higher drains first, then falls back on cooldown
 #   force-mapping: true         # rewrite upstream response model fields back to the client-visible alias (example below uses antigravity only)
 # Per-auth OAuth aliases can also be stored in an OAuth auth JSON file as "model_aliases".
 # Legacy "model-aliases" credentials remain supported and are normalized at load time.
@@ -843,6 +844,22 @@ nonstream-keepalive-interval: 0
 #   codex:
 #     - name: "gpt-5"
 #       alias: "g5"
+#
+#   # A shared alias creates a capability pool while explicit model IDs remain selectable.
+#   # The preferred route is used until it becomes unavailable or enters quota cooldown.
+#   # Existing session-affinity bindings remain sticky after failover.
+#   # claude:
+#   #   - name: "claude-fable-5-1"
+#   #     alias: "tier-frontier"
+#   #     display-name: "Frontier Tier"
+#   #     priority: 100
+#   #     fork: true
+#   # codex:
+#   #   - name: "gpt-6-astra"
+#   #     alias: "tier-frontier"
+#   #     display-name: "Frontier Tier"
+#   #     priority: 50
+#   #     fork: true
 #   kimi:
 #     - name: "kimi-k2.5"
 #       alias: "k2.5"

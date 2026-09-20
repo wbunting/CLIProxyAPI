@@ -86,6 +86,9 @@ func summarizeOAuthModelAliasList(list []config.OAuthModelAlias) OAuthModelAlias
 		if displayName := strings.TrimSpace(alias.DisplayName); displayName != "" {
 			key += "|display-name=" + displayName
 		}
+		if alias.Priority != nil {
+			key += fmt.Sprintf("|priority=%d", *alias.Priority)
+		}
 		if alias.ForceMapping {
 			key += "|force-mapping"
 		}
