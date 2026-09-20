@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -395,15 +395,15 @@ func fetchClaudeOAuthProfile(ctx context.Context, handler *Handler, auth *coreau
 	if errToken != nil || strings.TrimSpace(token) == "" {
 		return nil, errToken
 	}
-	profileURL, _ := url.Parse("https://api.anthropic.com/api/oauth/profile")
-	req, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, profileURL.String(), nil)
+	const profileURL = "https://api.anthropic.com/api/oauth/profile"
+	req, errRequest := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
 	if errRequest != nil {
 		return nil, errRequest
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
-	client := &http.Client{Timeout: 10 * time.Second, Transport: handler.apiCallTransport(auth, "")}
+	client := &http.Client{Transport: handler.apiCallTransport(auth, "")}
 	resp, errDo := client.Do(req)
 	if errDo != nil {
 		return nil, errDo
@@ -411,7 +411,7 @@ func fetchClaudeOAuthProfile(ctx context.Context, handler *Handler, auth *coreau
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return nil, &url.Error{Op: http.MethodGet, URL: profileURL.String(), Err: http.ErrNotSupported}
+		return nil, fmt.Errorf("Claude OAuth profile returned HTTP %d", resp.StatusCode)
 	}
 	var profile claudeOAuthProfile
 	if errDecode := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&profile); errDecode != nil {
