@@ -523,7 +523,7 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 		return nil, &Error{Code: "auth_not_found", Message: "no auth candidates"}
 	}
 
-	availableByPriority := make(map[int][]*Auth)
+	available := make([]*Auth, 0, len(auths))
 	cooldownCount := 0
 	unauthorizedCount := 0
 	var earliest time.Time
@@ -539,7 +539,7 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 				}
 				candidate.Attributes["priority"] = fmt.Sprintf("%d", priority)
 			}
-			availableByPriority[priority] = append(availableByPriority[priority], candidate)
+			available = append(available, candidate)
 			continue
 		}
 		if reason == blockReasonCooldown {
@@ -553,7 +553,7 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 		}
 	}
 
-	if len(availableByPriority) == 0 {
+	if len(available) == 0 {
 		lastCandidateErr := latestCandidateErrorForModel(auths, func(candidate *Auth) string {
 			return m.selectionModelForAuth(candidate, routeModel)
 		})
@@ -582,6 +582,21 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 			}, terminalCause)
 		}
 		return nil, newAuthUnavailableErrorWithCause(earliest, now, lastCandidateErr)
+	}
+
+	if !allPriorities {
+		// Remaining quota is the primary discriminator inside an alias/tier pool, so it is
+		// applied before configured model preference. narrowToBestQuotaBand is a no-op for
+		// explicit concrete model requests and when no candidate reports quota telemetry.
+		// The across-priority path is skipped because it exists to validate an established
+		// session-affinity binding, which must not be preempted by a quota observation.
+		available = m.narrowToBestQuotaBand(available, routeModel)
+	}
+
+	availableByPriority := make(map[int][]*Auth, len(available))
+	for _, candidate := range available {
+		priority := authPriority(candidate)
+		availableByPriority[priority] = append(availableByPriority[priority], candidate)
 	}
 
 	return availableAuthsFromPriorityBuckets(availableByPriority, allPriorities), nil
