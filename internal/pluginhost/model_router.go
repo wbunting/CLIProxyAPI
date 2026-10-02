@@ -36,6 +36,7 @@ func (h *Host) RouteModelExcept(ctx context.Context, req pluginapi.ModelRouteReq
 	}
 	skipPluginID = strings.TrimSpace(skipPluginID)
 	req.AvailableProviders = h.availableProvidersSnapshot()
+	req.AvailableModels = h.availableModelsSnapshot()
 	for _, record := range h.activeRecords() {
 		router := record.plugin.Capabilities.ModelRouter
 		if router == nil || h.isPluginFused(record.id) || record.id == skipPluginID {
@@ -59,6 +60,8 @@ func (h *Host) RouteModelExcept(ctx context.Context, req pluginapi.ModelRouteReq
 				log.WithFields(log.Fields{"plugin_id": record.id, "target_provider": resp.Target}).Warn("pluginhost: model router returned unavailable provider")
 				continue
 			}
+			return resp, true
+		case pluginapi.ModelRouteTargetModel:
 			return resp, true
 		case pluginapi.ModelRouteTargetSelf, pluginapi.ModelRouteTargetExecutor:
 			if !h.executorPluginReady(resp.Target, nextReq) {
@@ -114,6 +117,11 @@ func normalizeModelRouteResponse(routerPluginID string, resp pluginapi.ModelRout
 			return pluginapi.ModelRouteResponse{}, false
 		}
 		return resp, true
+	case pluginapi.ModelRouteTargetModel:
+		if resp.TargetModel == "" {
+			return pluginapi.ModelRouteResponse{}, false
+		}
+		return resp, true
 	default:
 		return pluginapi.ModelRouteResponse{}, false
 	}
@@ -125,6 +133,7 @@ func cloneModelRouteRequest(req pluginapi.ModelRouteRequest) pluginapi.ModelRout
 	req.Body = bytes.Clone(req.Body)
 	req.Metadata = cloneInterceptorMetadata(req.Metadata)
 	req.AvailableProviders = cloneStringSlice(req.AvailableProviders)
+	req.AvailableModels = cloneStringSlice(req.AvailableModels)
 	return req
 }
 
@@ -152,4 +161,11 @@ func (h *Host) availableProvidersSnapshot() []string {
 		return nil
 	}
 	return cloneStringSlice(providers)
+}
+
+func (h *Host) availableModelsSnapshot() []string {
+	if h == nil || h.authManager == nil {
+		return nil
+	}
+	return h.authManager.AvailableModelAliases()
 }

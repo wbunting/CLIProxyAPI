@@ -18,10 +18,18 @@ var (
 	pluginVersionPattern = regexp.MustCompile(`^[0-9][0-9A-Za-z.+-]*$`)
 )
 
+type pluginTransport string
+
+const (
+	pluginTransportDynamic    pluginTransport = "dynamic"
+	pluginTransportProcessRPC pluginTransport = "process-rpc"
+)
+
 type pluginFile struct {
-	ID      string
-	Path    string
-	Version string
+	ID        string
+	Path      string
+	Version   string
+	Transport pluginTransport
 }
 
 // PluginFileInfo describes a plugin binary selected by the host discovery rules.
@@ -51,7 +59,7 @@ func pluginIDFromPath(path string) string {
 	}
 	base := filepath.Base(path)
 	lowerBase := strings.ToLower(base)
-	for _, extension := range []string{".so", ".dylib", ".dll"} {
+	for _, extension := range []string{".so", ".dylib", ".dll", ".rpc"} {
 		if strings.HasSuffix(lowerBase, extension) {
 			return base[:len(base)-len(extension)]
 		}
@@ -68,7 +76,7 @@ func pluginFileFromPath(filePath string, requiredExtension string) (pluginFile, 
 			return pluginFile{}, false
 		}
 	} else {
-		for _, candidateExtension := range []string{".so", ".dylib", ".dll"} {
+		for _, candidateExtension := range []string{".so", ".dylib", ".dll", ".rpc"} {
 			if strings.HasSuffix(lowerBase, candidateExtension) {
 				extension = candidateExtension
 				break
@@ -92,7 +100,11 @@ func pluginFileFromPath(filePath string, requiredExtension string) (pluginFile, 
 	if !validPluginID(id) {
 		return pluginFile{}, false
 	}
-	return pluginFile{ID: id, Path: filePath, Version: version}, true
+	file := pluginFile{ID: id, Path: filePath, Version: version}
+	if strings.EqualFold(extension, ".rpc") {
+		file.Transport = pluginTransportProcessRPC
+	}
+	return file, true
 }
 
 // PluginExtension returns the dynamic library file extension used for goos.
@@ -141,13 +153,14 @@ func selectPluginFilesWithCandidates(root string, desiredVersions ...map[string]
 			if entry == nil || !entry.Type().IsRegular() {
 				continue
 			}
-			if strings.HasSuffix(strings.ToLower(entry.Name()), extension) {
+			name := strings.ToLower(entry.Name())
+			if strings.HasSuffix(name, extension) || strings.HasSuffix(name, ".rpc") {
 				files = append(files, filepath.Join(dir, entry.Name()))
 			}
 		}
 		sort.Strings(files)
 		for _, path := range files {
-			file, okFile := pluginFileFromPath(path, extension)
+			file, okFile := pluginFileFromPath(path, "")
 			if !okFile {
 				continue
 			}

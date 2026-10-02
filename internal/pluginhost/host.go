@@ -92,7 +92,7 @@ type Host struct {
 func New() *Host {
 	h := &Host{
 		applyMu:                make(chan struct{}, 1),
-		loader:                 defaultPluginLoader(),
+		loader:                 hybridPluginLoader{dynamic: defaultPluginLoader()},
 		loaded:                 make(map[string]*loadedPlugin),
 		retired:                make(map[string][]*loadedPlugin),
 		loading:                make(map[string]*pluginLoadRequest),
@@ -928,17 +928,17 @@ func (h *Host) rollbackReplacement(lp *loadedPlugin, item runtimeItemConfig) (ca
 		return capabilityRecord{}, pluginFile{}, false
 	}
 	return capabilityRecord{
-		id:       lp.id,
-		path:     lp.path,
-		version:  lp.version,
-		priority: item.Priority,
-		meta:     plugin.Metadata,
-		plugin:   plugin,
-	}, pluginFile{
-		ID:      lp.id,
-		Path:    lp.path,
-		Version: lp.version,
-	}, true
+			id:       lp.id,
+			path:     lp.path,
+			version:  lp.version,
+			priority: item.Priority,
+			meta:     plugin.Metadata,
+			plugin:   plugin,
+		}, pluginFile{
+			ID:      lp.id,
+			Path:    lp.path,
+			Version: lp.version,
+		}, true
 }
 
 func (h *Host) callRegister(ctx context.Context, lp *loadedPlugin, item runtimeItemConfig) (pluginapi.Plugin, bool) {

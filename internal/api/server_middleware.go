@@ -16,6 +16,9 @@ import (
 
 var corsExposedResponseHeaders = []string{
 	logging.CPATraceIDHeader,
+	"X-CPA-Resolved-Model",
+	"X-CPA-Route-Confidence",
+	"X-CPA-Route-Cache-Hit",
 	"X-CPA-VERSION",
 	"X-CPA-COMMIT",
 	"X-CPA-BUILD-DATE",

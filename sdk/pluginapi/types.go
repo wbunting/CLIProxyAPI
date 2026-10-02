@@ -554,6 +554,9 @@ type ModelRouteRequest struct {
 	// A router may target one of them via TargetKind=provider to run the request through the
 	// built-in auth/executor path. Treat as read-only.
 	AvailableProviders []string
+	// AvailableModels lists live client-visible model aliases. Routers can use it
+	// to constrain choices to models that the current server can execute.
+	AvailableModels []string
 }
 
 // ModelRouteTargetKind selects the execution target for a handled model route decision.
@@ -566,6 +569,9 @@ const (
 	ModelRouteTargetExecutor ModelRouteTargetKind = "executor"
 	// ModelRouteTargetProvider routes through the built-in auth/executor path.
 	ModelRouteTargetProvider ModelRouteTargetKind = "provider"
+	// ModelRouteTargetModel replaces the requested model and then continues
+	// through normal model-to-provider resolution.
+	ModelRouteTargetModel ModelRouteTargetKind = "model"
 )
 
 // ModelRouteResponse returns a model router plugin decision.

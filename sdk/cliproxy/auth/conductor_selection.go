@@ -585,12 +585,10 @@ func (m *Manager) availableAuthsForRouteModelWithPriorityMode(auths []*Auth, pro
 	}
 
 	if !allPriorities {
-		// Remaining quota is the primary discriminator inside an alias/tier pool, so it is
-		// applied before configured model preference. narrowToBestQuotaBand is a no-op for
-		// explicit concrete model requests and when no candidate reports quota telemetry.
-		// The across-priority path is skipped because it exists to validate an established
-		// session-affinity binding, which must not be preempted by a quota observation.
-		available = m.narrowToBestQuotaBand(available, routeModel)
+		// Preference remains the default. Quota and reset timing override it only when
+		// the preferred route is low-risk no longer; the across-priority path is skipped
+		// because it validates an established session-affinity binding.
+		available = m.narrowToSaferQuotaCandidates(available, routeModel, now)
 	}
 
 	availableByPriority := make(map[int][]*Auth, len(available))

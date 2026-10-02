@@ -126,6 +126,9 @@ func nativeInteractionsExecutionError() *interfaces.ErrorMessage {
 // router selected a built-in provider, it skips model->provider resolution and uses the router's
 // provider (with an optional target model); otherwise it falls back to the registry-based path.
 func (h *BaseAPIHandler) providersForExecution(modelName, originalRequestedModel string, allowImageModel bool, routeDecision modelRouteDecision, execOptions modelExecutionOptions) ([]string, string, *interfaces.ErrorMessage) {
+	if routeDecision.Provider == "" && routeDecision.Model != "" {
+		modelName = routeDecision.Model
+	}
 	forcedProvider := strings.ToLower(strings.TrimSpace(execOptions.ForcedProvider))
 	if forcedProvider != "" {
 		if routeDecision.ExecutorPluginID != "" {
@@ -285,6 +288,7 @@ type modelRouteDecision struct {
 	ExecutorPluginID string
 	Provider         string
 	Model            string
+	Reason           string
 }
 
 func routeModel(ctx context.Context, host PluginModelRouterHost, req pluginapi.ModelRouteRequest, skipPluginID string) (pluginapi.ModelRouteResponse, bool) {
@@ -343,12 +347,38 @@ func (h *BaseAPIHandler) applyModelRouter(ctx context.Context, handlerType, mode
 	if !ok || !resp.Handled {
 		return decision
 	}
+	decision.Reason = strings.TrimSpace(resp.Reason)
 	switch resp.TargetKind {
 	case pluginapi.ModelRouteTargetSelf, pluginapi.ModelRouteTargetExecutor:
 		decision.ExecutorPluginID = strings.TrimSpace(resp.Target)
 	case pluginapi.ModelRouteTargetProvider:
 		decision.Provider = strings.ToLower(strings.TrimSpace(resp.Target))
 		decision.Model = strings.TrimSpace(resp.TargetModel)
+	case pluginapi.ModelRouteTargetModel:
+		decision.Model = strings.TrimSpace(resp.TargetModel)
 	}
 	return decision
+}
+
+func applyModelRouteHeaders(headers http.Header, decision modelRouteDecision) http.Header {
+	if strings.TrimSpace(decision.Model) == "" {
+		return headers
+	}
+	if headers == nil {
+		headers = make(http.Header)
+	}
+	headers.Set("X-CPA-Resolved-Model", decision.Model)
+	for _, item := range strings.Split(decision.Reason, ";") {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "confidence":
+			headers.Set("X-CPA-Route-Confidence", strings.TrimSpace(value))
+		case "cache_hit":
+			headers.Set("X-CPA-Route-Cache-Hit", strings.TrimSpace(value))
+		}
+	}
+	return headers
 }

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -187,6 +188,53 @@ func TestModelPreferenceBreaksTiesWithinSameQuotaBand(t *testing.T) {
 	)
 	if got := fixture.executeAlias(t); got != fixture.claude {
 		t.Fatalf("selected %q, want preferred model %q", got, fixture.claude)
+	}
+}
+
+// TestHealthyPreferredModelBeatsHealthyAlternative asserts that quota is not
+// needlessly used to override the configured preference while both routes are healthy.
+func TestHealthyPreferredModelBeatsHealthyAlternative(t *testing.T) {
+	fixture := newQuotaRouteFixture(t, "tier-quota-healthy-preference",
+		&Auth{
+			ID: "quota-healthy-claude",
+			Quota: QuotaState{Signals: map[string]string{
+				"Anthropic-Ratelimit-Unified-5h-Utilization": "0.10",
+			}},
+		},
+		&Auth{
+			ID: "quota-healthy-codex",
+			Quota: QuotaState{Signals: map[string]string{
+				"X-Codex-Primary-Used-Percent": "2",
+			}},
+		},
+	)
+	if got := fixture.executeAlias(t); got != fixture.claude {
+		t.Fatalf("selected %q, want preferred healthy model %q", got, fixture.claude)
+	}
+}
+
+// TestLowPreferredModelUsesAlternativeWithEarlierReset asserts that a low-quota
+// preferred route yields to an alternative whose low quota recovers sooner.
+func TestLowPreferredModelUsesAlternativeWithEarlierReset(t *testing.T) {
+	now := time.Now()
+	fixture := newQuotaRouteFixture(t, "tier-quota-reset-preference",
+		&Auth{
+			ID: "quota-reset-claude",
+			Quota: QuotaState{ObservedAt: now, Signals: map[string]string{
+				"Anthropic-Ratelimit-Unified-5h-Utilization": "0.95",
+				"Anthropic-Ratelimit-Unified-5h-Reset":       strconv.FormatInt(now.Add(48*time.Hour).Unix(), 10),
+			}},
+		},
+		&Auth{
+			ID: "quota-reset-codex",
+			Quota: QuotaState{ObservedAt: now, Signals: map[string]string{
+				"X-Codex-Primary-Used-Percent": "80",
+				"X-Codex-Primary-Reset-At":     strconv.FormatInt(now.Add(2*time.Hour).Unix(), 10),
+			}},
+		},
+	)
+	if got := fixture.executeAlias(t); got != fixture.codex {
+		t.Fatalf("selected %q, want earlier-reset alternative %q", got, fixture.codex)
 	}
 }
 

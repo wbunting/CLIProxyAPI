@@ -3,32 +3,32 @@ package auth
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
-// quotaBandCount is the number of coarse remaining-quota bands used when several
-// concrete routes share one alias.
-//
-// Quota telemetry is a snapshot of the last upstream response for a credential,
-// not a continuously sampled counter, so it is too sparse and too bursty to rank
-// routes on a continuous scale. Coarse bands keep routing stable: a route only
-// loses to another once their observed remaining quota differs by a full band.
-const quotaBandCount = 4
+// quotaHealthyThreshold is deliberately conservative: preference remains the
+// primary policy while a route has comfortable headroom. Quota and reset timing
+// override preference only when the preferred route is becoming risky.
+const quotaHealthyThreshold = 0.25
 
-// quotaBandUnknown is the band assigned to candidates with no usable remaining-quota
-// signal. Missing telemetry is not evidence of exhaustion, so unknown candidates join
-// the top band and remain ordered by configured model preference. This also keeps
-// selection unchanged for deployments where no provider reports quota at all.
-const quotaBandUnknown = quotaBandCount - 1
+type quotaRouteObservation struct {
+	remaining  float64
+	known      bool
+	resetAt    time.Time
+	resetKnown bool
+}
 
-// RemainingQuotaFraction reports the remaining quota fraction in [0,1] implied by a
-// provider's observed quota signals, and whether any usable signal was present.
-//
-// Only providers that publish a usage watermark are supported (Claude unified
-// rate-limit utilization and Codex used-percent windows). The most constrained
-// window wins, because the first window to reach its limit blocks the route.
+// RemainingQuotaFraction reports the remaining quota fraction in [0,1] implied by
+// a provider's observed quota signals, and whether any usable signal was present.
+// The most constrained window wins because that window can block the route first.
 func RemainingQuotaFraction(provider, model string, signals map[string]string) (float64, bool) {
+	observation := quotaObservation(provider, model, signals, time.Time{})
+	return observation.remaining, observation.known
+}
+
+func quotaObservation(provider, model string, signals map[string]string, observedAt time.Time) quotaRouteObservation {
 	if len(signals) == 0 {
-		return 0, false
+		return quotaRouteObservation{}
 	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "claude":
@@ -36,36 +36,52 @@ func RemainingQuotaFraction(provider, model string, signals map[string]string) (
 		if strings.Contains(strings.ToLower(model), "fable") {
 			windows = append(windows, "7d_oi")
 		}
-		remaining, found := 1.0, false
+		var best quotaRouteObservation
 		for _, window := range windows {
 			value, ok := quotaSignalFloat(signals, "Anthropic-Ratelimit-Unified-"+window+"-Utilization")
 			if !ok {
 				continue
 			}
-			if candidate := clampQuotaFraction(1 - value); !found || candidate < remaining {
-				remaining = candidate
-				found = true
+			candidate := quotaRouteObservation{
+				remaining:  clampQuotaFraction(1 - value),
+				known:      true,
+				resetAt:    quotaSignalTime(signals, "Anthropic-Ratelimit-Unified-"+window+"-Reset", observedAt),
+				resetKnown: false,
+			}
+			candidate.resetKnown = !candidate.resetAt.IsZero()
+			if !best.known || candidate.remaining < best.remaining {
+				best = candidate
 			}
 		}
-		return remaining, found
+		if !best.resetKnown {
+			best.resetAt = quotaSignalTime(signals, "Anthropic-Ratelimit-Unified-Reset", observedAt)
+			best.resetKnown = !best.resetAt.IsZero()
+		}
+		return best
 	case "codex":
-		remaining, found := 1.0, false
+		var best quotaRouteObservation
 		for key, value := range signals {
-			if !strings.HasSuffix(strings.ToLower(strings.TrimSpace(key)), "-used-percent") {
+			lowerKey := strings.ToLower(strings.TrimSpace(key))
+			if !strings.HasSuffix(lowerKey, "-used-percent") {
 				continue
 			}
 			used, errParse := strconv.ParseFloat(strings.TrimSpace(value), 64)
 			if errParse != nil {
 				continue
 			}
-			if candidate := clampQuotaFraction(1 - used/100); !found || candidate < remaining {
-				remaining = candidate
-				found = true
+			prefix := strings.TrimSuffix(key, "-Used-Percent")
+			candidate := quotaRouteObservation{
+				remaining: clampQuotaFraction(1 - used/100),
+				known:     true,
+			}
+			candidate.resetAt, candidate.resetKnown = quotaSignalTimeForPrefix(signals, prefix, observedAt)
+			if !best.known || candidate.remaining < best.remaining {
+				best = candidate
 			}
 		}
-		return remaining, found
+		return best
 	default:
-		return 0, false
+		return quotaRouteObservation{}
 	}
 }
 
@@ -80,6 +96,40 @@ func quotaSignalFloat(signals map[string]string, name string) (float64, bool) {
 	return 0, false
 }
 
+func quotaSignalTime(signals map[string]string, name string, observedAt time.Time) time.Time {
+	for key, value := range signals {
+		if strings.EqualFold(strings.TrimSpace(key), name) {
+			return parseQuotaRoutingTime(value, observedAt)
+		}
+	}
+	return time.Time{}
+}
+
+func quotaSignalTimeForPrefix(signals map[string]string, prefix string, observedAt time.Time) (time.Time, bool) {
+	if reset := quotaSignalTime(signals, prefix+"-Reset-At", observedAt); !reset.IsZero() {
+		return reset, true
+	}
+	if resetAfter, ok := quotaSignalFloat(signals, prefix+"-Reset-After-Seconds"); ok && resetAfter >= 0 {
+		base := observedAt
+		if base.IsZero() {
+			base = time.Now()
+		}
+		return base.Add(time.Duration(resetAfter * float64(time.Second))), true
+	}
+	return time.Time{}, false
+}
+
+func parseQuotaRoutingTime(value string, observedAt time.Time) time.Time {
+	value = strings.TrimSpace(value)
+	if seconds, errParse := strconv.ParseInt(value, 10, 64); errParse == nil && seconds > 0 {
+		return time.Unix(seconds, 0)
+	}
+	if parsed, errParse := time.Parse(time.RFC3339, value); errParse == nil {
+		return parsed
+	}
+	return time.Time{}
+}
+
 func clampQuotaFraction(value float64) float64 {
 	if value < 0 {
 		return 0
@@ -90,87 +140,109 @@ func clampQuotaFraction(value float64) float64 {
 	return value
 }
 
-// quotaBandFromRemaining maps a remaining fraction to a coarse band index.
-func quotaBandFromRemaining(remaining float64) int {
-	band := int(clampQuotaFraction(remaining) * float64(quotaBandCount))
-	if band >= quotaBandCount {
-		band = quotaBandCount - 1
-	}
-	if band < 0 {
-		band = 0
-	}
-	return band
-}
-
-// routeQuotaBand reports the coarse remaining-quota band observed for one credential
-// on one concrete upstream model.
-//
-// Model-level observations win over credential-wide ones: a credential-wide snapshot
-// describes the whole account, while a per-model snapshot describes the exact route
-// being scheduled. Cooldown state is deliberately not consulted here; blocked
-// credentials and blocked models are already removed by isAuthBlockedForModel before
-// banding runs.
-func routeQuotaBand(auth *Auth, selectionModel string) (int, bool) {
+func routeQuotaObservation(auth *Auth, selectionModel string) quotaRouteObservation {
 	if auth == nil {
-		return quotaBandUnknown, false
+		return quotaRouteObservation{}
 	}
 	provider := strings.ToLower(strings.TrimSpace(auth.Provider))
 	if state := existingModelState(auth, selectionModel); state != nil {
-		if remaining, ok := RemainingQuotaFraction(provider, selectionModel, state.Quota.Signals); ok {
-			return quotaBandFromRemaining(remaining), true
+		observation := quotaObservation(provider, selectionModel, state.Quota.Signals, state.Quota.ObservedAt)
+		if observation.known || observation.resetKnown {
+			return observation
 		}
 	}
-	if remaining, ok := RemainingQuotaFraction(provider, selectionModel, auth.Quota.Signals); ok {
-		return quotaBandFromRemaining(remaining), true
-	}
-	return quotaBandUnknown, false
+	return quotaObservation(provider, selectionModel, auth.Quota.Signals, auth.Quota.ObservedAt)
 }
 
-// narrowToBestQuotaBand keeps only the candidates sitting in the highest observed
-// remaining-quota band.
-//
-// It applies only when the requested route resolves to more than one concrete upstream
-// model, i.e. when the caller asked for an alias/tier pool. An explicit concrete model
-// request, or a pool where every credential serves the same upstream model, is returned
-// untouched so existing credential round-robin semantics are preserved.
-//
-// Candidates are returned in their input order, so the caller's later priority bucketing
-// and round-robin rotation stay deterministic.
-func (m *Manager) narrowToBestQuotaBand(candidates []*Auth, routeModel string) []*Auth {
+// narrowToSaferQuotaCandidates keeps the configured preference as the default
+// policy. It only overrides preference when every highest-priority candidate is
+// known to be low on quota. Healthy alternatives then win; if every alternative
+// is also low, the route with the earliest known reset wins, followed by the
+// route with the most remaining quota. Missing reset information is treated as
+// riskier than a known reset because it cannot be safely scheduled around.
+func (m *Manager) narrowToSaferQuotaCandidates(candidates []*Auth, routeModel string, now time.Time) []*Auth {
 	if m == nil || len(candidates) < 2 || strings.TrimSpace(routeModel) == "" {
 		return candidates
 	}
 
-	bands := make([]int, len(candidates))
-	distinctModels := make(map[string]struct{}, len(candidates))
-	bestBand := 0
-	bestCount := 0
-	anyKnown := false
+	observations := make([]quotaRouteObservation, len(candidates))
+	maxPriority := 0
 	for i, candidate := range candidates {
-		selectionModel := m.selectionModelForAuth(candidate, routeModel)
-		if key := canonicalModelKey(selectionModel); key != "" {
-			distinctModels[key] = struct{}{}
-		}
-		band, known := routeQuotaBand(candidate, selectionModel)
-		anyKnown = anyKnown || known
-		bands[i] = band
-		switch {
-		case bestCount == 0 || band > bestBand:
-			bestBand = band
-			bestCount = 1
-		case band == bestBand:
-			bestCount++
+		observations[i] = routeQuotaObservation(candidate, m.selectionModelForAuth(candidate, routeModel))
+		priority := authPriority(candidate)
+		if i == 0 || priority > maxPriority {
+			maxPriority = priority
 		}
 	}
-	if !anyKnown || len(distinctModels) < 2 || bestCount == len(candidates) {
+
+	// Preference wins whenever the preferred route is healthy or its quota is
+	// unknown. Unknown telemetry is not evidence that the route is exhausted.
+	preferredLow := false
+	for i, candidate := range candidates {
+		if authPriority(candidate) != maxPriority {
+			continue
+		}
+		observation := observations[i]
+		if !observation.known || observation.remaining >= quotaHealthyThreshold {
+			return candidates
+		}
+		preferredLow = true
+	}
+	if !preferredLow {
 		return candidates
 	}
 
-	out := make([]*Auth, 0, bestCount)
+	// Prefer known healthy alternatives over a low preferred route.
+	healthy := make([]*Auth, 0, len(candidates))
 	for i, candidate := range candidates {
-		if bands[i] == bestBand {
-			out = append(out, candidate)
+		if observations[i].known && observations[i].remaining >= quotaHealthyThreshold {
+			healthy = append(healthy, candidate)
 		}
 	}
-	return out
+	if len(healthy) > 0 {
+		return healthy
+	}
+
+	// All known alternatives are low. Keep only candidates with the best reset
+	// horizon, then let normal model priority and round-robin resolve ties.
+	best := make([]*Auth, 0, len(candidates))
+	var bestObservation quotaRouteObservation
+	for i, candidate := range candidates {
+		observation := observations[i]
+		if !observation.known {
+			continue
+		}
+		if len(best) == 0 || saferLowQuota(observation, bestObservation, now) {
+			best = best[:0]
+			bestObservation = observation
+		}
+		if sameLowQuotaRisk(observation, bestObservation, now) {
+			best = append(best, candidate)
+		}
+	}
+	if len(best) == 0 {
+		return candidates
+	}
+	return best
+}
+
+func saferLowQuota(candidate, current quotaRouteObservation, now time.Time) bool {
+	if candidate.resetKnown != current.resetKnown {
+		return candidate.resetKnown
+	}
+	if candidate.resetKnown && !candidate.resetAt.Equal(current.resetAt) {
+		return candidate.resetAt.Before(current.resetAt)
+	}
+	return candidate.remaining > current.remaining
+}
+
+func sameLowQuotaRisk(a, b quotaRouteObservation, now time.Time) bool {
+	if a.resetKnown != b.resetKnown {
+		return false
+	}
+	if a.resetKnown && !a.resetAt.Equal(b.resetAt) {
+		return false
+	}
+	_ = now
+	return a.remaining == b.remaining
 }

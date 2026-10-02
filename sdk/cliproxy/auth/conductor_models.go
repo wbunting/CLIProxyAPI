@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +13,33 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 )
+
+// AvailableModelAliases returns the client-visible aliases available through
+// the current auth registry. It is intended for routing plugins that must avoid
+// choosing a model the host cannot execute.
+func (m *Manager) AvailableModelAliases() []string {
+	if m == nil {
+		return nil
+	}
+	registryRef := registry.GetGlobalRegistry()
+	seen := make(map[string]struct{})
+	for _, auth := range m.List() {
+		if auth == nil || strings.TrimSpace(auth.Provider) == "" {
+			continue
+		}
+		for _, model := range registryRef.GetModelsForClient(auth.ID) {
+			if alias := strings.TrimSpace(model.ID); alias != "" {
+				seen[alias] = struct{}{}
+			}
+		}
+	}
+	aliases := make([]string, 0, len(seen))
+	for alias := range seen {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	return aliases
+}
 
 func (m *Manager) lookupAPIKeyUpstreamModel(authID, requestedModel string) string {
 	return lookupAPIKeyUpstreamModel(m.loadAPIKeyModelRouting(), authID, requestedModel)

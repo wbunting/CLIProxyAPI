@@ -9,6 +9,32 @@ func TestGetStaticModelDefinitionsByChannelSupportsGeminiInteractions(t *testing
 	}
 }
 
+func TestCodexPlanModelsIncludeGPT61Sol(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		models []*ModelInfo
+	}{
+		{name: "team", models: GetCodexTeamModels()},
+		{name: "plus", models: GetCodexPlusModels()},
+		{name: "pro", models: GetCodexProModels()},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			for _, model := range testCase.models {
+				if model != nil && model.ID == "gpt-6.1-sol" {
+					if model.DisplayName != "GPT 6.1 Sol" {
+						t.Errorf("DisplayName = %q, want %q", model.DisplayName, "GPT 6.1 Sol")
+					}
+					if model.NativeCapabilities == nil || model.NativeCapabilities.WebSearch == nil || !*model.NativeCapabilities.WebSearch {
+						t.Error("NativeCapabilities.WebSearch = false or unspecified, want true")
+					}
+					return
+				}
+			}
+			t.Fatal("missing gpt-6.1-sol")
+		})
+	}
+}
+
 func TestModelOverrideHeadersFromEmbeddedModels(t *testing.T) {
 	const wantUA = "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
 	got := ModelOverrideHeaders("gpt-5.6-luna")
