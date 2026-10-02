@@ -35,6 +35,21 @@ func TestCodexPlanModelsIncludeGPT61Sol(t *testing.T) {
 	}
 }
 
+func TestClaudeModelsIncludeSonnet55(t *testing.T) {
+	for _, model := range GetClaudeModels() {
+		if model != nil && model.ID == "claude-sonnet-5-5" {
+			if model.DisplayName != "Claude Sonnet 5.5" {
+				t.Errorf("DisplayName = %q, want %q", model.DisplayName, "Claude Sonnet 5.5")
+			}
+			if model.ContextLength != 1000000 || model.MaxCompletionTokens != 128000 {
+				t.Errorf("limits = %d/%d, want 1000000/128000", model.ContextLength, model.MaxCompletionTokens)
+			}
+			return
+		}
+	}
+	t.Fatal("missing claude-sonnet-5-5")
+}
+
 func TestModelOverrideHeadersFromEmbeddedModels(t *testing.T) {
 	const wantUA = "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
 	got := ModelOverrideHeaders("gpt-5.6-luna")
