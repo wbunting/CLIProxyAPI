@@ -558,9 +558,9 @@ func (s *Service) tryRegisterPluginModelsForAuth(ctx context.Context, a *coreaut
 		return true
 	}
 	models := applyExcludedModels(result.Models, activeExcluded)
-	models = applyOAuthModelAliasForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
+	models = applyOAuthModelAliasAndSettingsForAuth(s.cfg, providerKey, activeAuthKind, activeAuth.Attributes, models)
 	if len(models) > 0 {
-		models = applyOAuthSettingsForAuth(s.cfg, providerKey, activeAuthKind, models)
+		models = applyOAuthSettingsAfterAliasForAuth(s.cfg, providerKey, activeAuthKind, models)
 		s.registerResolvedModelsForAuth(activeAuth, providerKey, applyModelPrefixes(models, activeAuth.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))
 		return true
 	}

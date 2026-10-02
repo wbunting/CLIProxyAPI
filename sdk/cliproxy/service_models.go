@@ -285,7 +285,7 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	if ctx.Err() != nil {
 		return
 	}
-	models = applyOAuthModelAliasForAuth(s.cfg, provider, authKind, a.Attributes, models)
+	models = applyOAuthModelAliasAndSettingsForAuth(s.cfg, provider, authKind, a.Attributes, models)
 	if ctx.Err() != nil {
 		return
 	}
@@ -295,7 +295,7 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	}
 	models = s.appendPluginModels(key, models)
 	if len(models) > 0 {
-		models = applyOAuthSettingsForAuth(s.cfg, provider, authKind, models)
+		models = applyOAuthSettingsAfterAliasForAuth(s.cfg, provider, authKind, models)
 		s.registerResolvedModelsForAuth(a, key, applyModelPrefixes(models, a.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))
 		if strings.EqualFold(strings.TrimSpace(a.Provider), "antigravity") {
 			s.asyncProbeAntigravityCapabilities(ctx, a, key)
@@ -1044,6 +1044,7 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 
 	out := make([]*ModelInfo, 0, len(models))
 	seen := make(map[string]struct{}, len(models))
+	routes := make(map[string]*ModelInfo)
 	for _, model := range models {
 		if model == nil {
 			continue
@@ -1088,6 +1089,11 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 			}
 			aliasKey := strings.ToLower(mappedID)
 			if _, exists := seen[aliasKey]; exists {
+				// Several upstream models share this alias and any of them may serve it,
+				// so the alias advertises the smallest member context window.
+				if route := routes[aliasKey]; route != nil {
+					lowerRouteContextLength(route, model)
+				}
 				continue
 			}
 			seen[aliasKey] = struct{}{}
@@ -1106,6 +1112,7 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 			if clone.Name != "" {
 				clone.Name = rewriteModelInfoName(clone.Name, id, mappedID)
 			}
+			routes[aliasKey] = &clone
 			out = append(out, &clone)
 			addedAlias = true
 		}
@@ -1119,6 +1126,70 @@ func applyOAuthModelAliasEntries(aliases []config.OAuthModelAlias, models []*Mod
 		}
 	}
 	return out
+}
+
+// lowerRouteContextLength caps an alias route at a member's context window.
+func lowerRouteContextLength(route, member *ModelInfo) {
+	memberLimit := registry.EffectiveContextLength(member)
+	if memberLimit <= 0 {
+		return
+	}
+	if current := registry.EffectiveContextLength(route); current > 0 && current <= memberLimit {
+		return
+	}
+	route.ContextLength = memberLimit
+	route.MaxContextLength = memberLimit
+}
+
+// applyOAuthModelAliasAndSettingsForAuth resolves the models one OAuth auth exposes.
+// Settings run on the upstream models first so an alias that several upstream
+// models collapse into can take the smallest member window. Aliased models are
+// then matched against settings by their client-visible ID only; matching them by
+// upstream name again would replace that minimum with one member's window.
+func applyOAuthModelAliasAndSettingsForAuth(cfg *config.Config, provider, authKind string, attributes map[string]string, models []*ModelInfo) []*ModelInfo {
+	models = applyOAuthSettingsForAuth(cfg, provider, authKind, models)
+	return applyOAuthModelAliasForAuth(cfg, provider, authKind, attributes, models)
+}
+
+// applyOAuthSettingsAfterAliasForAuth applies settings once aliases are resolved.
+func applyOAuthSettingsAfterAliasForAuth(cfg *config.Config, provider, authKind string, models []*ModelInfo) []*ModelInfo {
+	if len(models) == 0 {
+		return models
+	}
+	channel := coreauth.OAuthModelAliasChannel(provider, authKind)
+	if channel == "" {
+		return models
+	}
+	settings := oauthSettingsForAuth(cfg, channel)
+	if len(settings) == 0 {
+		return models
+	}
+	out := make([]*ModelInfo, 0, len(models))
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		var setting *config.OAuthModelSetting
+		if isAliasRoute(model) {
+			setting = config.ResolveOAuthModelSetting(settings, model.ID, "", "")
+		} else {
+			setting = config.ResolveOAuthModelSetting(settings, model.ID, model.MetadataModelID, model.Name)
+		}
+		if setting != nil && setting.MaxContextLength > 0 {
+			clone := *model
+			clone.ContextLength = setting.MaxContextLength
+			clone.MaxContextLength = setting.MaxContextLength
+			out = append(out, &clone)
+		} else {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
+func isAliasRoute(model *ModelInfo) bool {
+	metadataID := strings.TrimSpace(model.MetadataModelID)
+	return metadataID != "" && !strings.EqualFold(metadataID, strings.TrimSpace(model.ID))
 }
 
 func applyOAuthSettings(cfg *config.Config, provider, authKind string, models []*ModelInfo) []*ModelInfo {

@@ -1316,7 +1316,7 @@ func (r *ModelRegistry) GetAvailableModelInfos() []*ModelInfo {
 		if !available || registration == nil || registration.Info == nil {
 			continue
 		}
-		result = append(result, cloneModelInfo(registration.Info))
+		result = append(result, cloneModelInfo(r.routeModelInfoLocked(registration)))
 	}
 	sort.Slice(result, func(i, j int) bool {
 		return strings.TrimSpace(result[i].ID) < strings.TrimSpace(result[j].ID)
@@ -1337,7 +1337,7 @@ func (r *ModelRegistry) buildAvailableModelsLocked(handlerType string, now time.
 			continue
 		}
 
-		model := r.convertModelToMap(registration.Info, handlerType)
+		model := r.convertModelToMap(r.routeModelInfoLocked(registration), handlerType)
 		if model != nil {
 			models = append(models, model)
 		}
@@ -1619,6 +1619,50 @@ func (r *ModelRegistry) GetModelInfo(modelID, provider string) *ModelInfo {
 }
 
 // convertModelToMap converts ModelInfo to the appropriate format for different handler types
+// EffectiveContextLength returns the configured context window override when set,
+// otherwise the model's declared context length. Zero means unknown.
+func EffectiveContextLength(model *ModelInfo) int {
+	if model == nil {
+		return 0
+	}
+	if model.MaxContextLength > 0 {
+		return model.MaxContextLength
+	}
+	return model.ContextLength
+}
+
+// routeModelInfoLocked returns the metadata advertised for a registration.
+// When several clients serve the same model ID (for example one alias shared by
+// Codex, Claude, and xAI credentials), any of them may receive a request, so the
+// advertised context window is the smallest one declared by a serving client.
+// Registration.Info alone is last-writer-wins and would advertise an arbitrary member.
+func (r *ModelRegistry) routeModelInfoLocked(registration *ModelRegistration) *ModelInfo {
+	if registration == nil || registration.Info == nil {
+		return nil
+	}
+	info := registration.Info
+	modelID := info.ID
+	limit := EffectiveContextLength(info)
+	lowered := false
+	for _, clientInfos := range r.clientModelInfos {
+		memberLimit := EffectiveContextLength(clientInfos[modelID])
+		if memberLimit <= 0 {
+			continue
+		}
+		if limit <= 0 || memberLimit < limit {
+			limit = memberLimit
+			lowered = true
+		}
+	}
+	if !lowered {
+		return info
+	}
+	route := cloneModelInfo(info)
+	route.ContextLength = limit
+	route.MaxContextLength = limit
+	return route
+}
+
 func (r *ModelRegistry) convertModelToMap(model *ModelInfo, handlerType string) map[string]any {
 	if model == nil {
 		return nil
