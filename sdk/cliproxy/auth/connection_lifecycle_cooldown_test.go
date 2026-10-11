@@ -337,3 +337,62 @@ func assertNoCooldown(t *testing.T, m *Manager, authID, model string) {
 		}
 	}
 }
+
+func TestManager_MarkResult_EdgeProxyResetDoesNotCooldown(t *testing.T) {
+	previous := quotaCooldownDisabled.Load()
+	quotaCooldownDisabled.Store(false)
+	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
+
+	prevTransient := transientErrorCooldownSeconds.Load()
+	SetTransientErrorCooldownSeconds(0)
+	t.Cleanup(func() { transientErrorCooldownSeconds.Store(prevTransient) })
+
+	cases := []struct {
+		name string
+		err  *Error
+	}{
+		{name: "envoy connection termination 503", err: &Error{HTTPStatus: http.StatusServiceUnavailable, Message: "upstream connect error or disconnect/reset before headers. reset reason: connection termination"}},
+		{name: "envoy no healthy upstream 503", err: &Error{HTTPStatus: http.StatusServiceUnavailable, Message: "no healthy upstream"}},
+		{name: "envoy reset 502", err: &Error{HTTPStatus: http.StatusBadGateway, Message: `{"error":{"message":"upstream connect error or disconnect/reset before headers. reset reason: overflow"}}`}},
+	}
+
+	for _, tc := range cases {
+		for _, model := range []string{"gpt-6.1-sol", ""} {
+			t.Run(fmt.Sprintf("%s/model=%q", tc.name, model), func(t *testing.T) {
+				m := NewManager(nil, nil, nil)
+				auth := &Auth{ID: "auth-edge-reset", Provider: "codex"}
+				if _, errRegister := m.Register(context.Background(), auth); errRegister != nil {
+					t.Fatalf("register auth: %v", errRegister)
+				}
+				m.MarkResult(context.Background(), Result{AuthID: auth.ID, Provider: auth.Provider, Model: model, Success: false, Error: tc.err})
+				assertNoCooldown(t, m, auth.ID, model)
+			})
+		}
+	}
+}
+
+func TestManager_MarkResult_Plain503StillCoolsDown(t *testing.T) {
+	previous := quotaCooldownDisabled.Load()
+	quotaCooldownDisabled.Store(false)
+	t.Cleanup(func() { quotaCooldownDisabled.Store(previous) })
+
+	prevTransient := transientErrorCooldownSeconds.Load()
+	SetTransientErrorCooldownSeconds(0)
+	t.Cleanup(func() { transientErrorCooldownSeconds.Store(prevTransient) })
+
+	m := NewManager(nil, nil, nil)
+	auth := &Auth{ID: "auth-plain-503", Provider: "codex"}
+	if _, errRegister := m.Register(context.Background(), auth); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+	model := "gpt-6.1-sol"
+	m.MarkResult(context.Background(), Result{AuthID: auth.ID, Provider: auth.Provider, Model: model, Success: false, Error: &Error{HTTPStatus: http.StatusServiceUnavailable, Message: `{"error":{"message":"The server is overloaded"}}`}})
+	updated, ok := m.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth to be present")
+	}
+	state := updated.ModelStates[model]
+	if state == nil || !state.Unavailable || state.NextRetryAfter.IsZero() {
+		t.Fatalf("expected plain 503 to keep transient model cooldown, got %#v", state)
+	}
+}

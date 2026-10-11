@@ -2213,7 +2213,9 @@ func (m *Manager) warnLogAuthUnavailable(ctx context.Context, providers []string
 		totalCandidates++
 		checkModel := m.selectionModelForAuth(candidate, model)
 		blocked, reason, next := isAuthBlockedForModel(candidate, checkModel, now)
-		if blocked && reason == blockReasonCooldown {
+		// Timed transient-error backoffs block selection just like quota cooldowns,
+		// so report them too; otherwise the log omits the credential that is blocking.
+		if blocked && (reason == blockReasonCooldown || (reason == blockReasonOther && next.After(now))) {
 			coolingSummaries = append(coolingSummaries, authCoolingSummary(candidate, checkModel, next, now))
 		}
 	}
