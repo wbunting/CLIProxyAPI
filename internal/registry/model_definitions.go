@@ -39,7 +39,30 @@ type staticModelsJSON struct {
 
 // GetClaudeModels returns the standard Claude model definitions.
 func GetClaudeModels() []*ModelInfo {
-	return cloneModelInfos(getModels().Claude)
+	return upsertModelInfos(cloneModelInfos(getModels().Claude), claudeBuiltinFable52ModelInfo())
+}
+
+// claudeBuiltinFable52ModelInfo keeps Fable 5.2 available even when the remote
+// catalog has not caught up. Limits and thinking support follow Fable 5.1 until
+// model-specific metadata is available.
+func claudeBuiltinFable52ModelInfo() *ModelInfo {
+	return &ModelInfo{
+		ID:                  "claude-fable-5-2",
+		Object:              "model",
+		OwnedBy:             "anthropic",
+		Type:                "claude",
+		DisplayName:         "Claude Fable 5.2",
+		ContextLength:       1000000,
+		MaxCompletionTokens: 128000,
+		Thinking: &ThinkingSupport{
+			Min:         1024,
+			Max:         128000,
+			ZeroAllowed: true,
+			Levels:      []string{"low", "medium", "high", "xhigh", "max"},
+		},
+		SupportedInputModalities:  []string{"text", "image"},
+		SupportedOutputModalities: []string{"text"},
+	}
 }
 
 // GetGeminiModels returns the standard Gemini model definitions.
@@ -538,7 +561,7 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 
 	data := getModels()
 	allModels := [][]*ModelInfo{
-		data.Claude,
+		GetClaudeModels(),
 		data.Gemini,
 		data.Vertex,
 		data.AIStudio,
