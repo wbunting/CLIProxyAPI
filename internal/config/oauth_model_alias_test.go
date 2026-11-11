@@ -3,10 +3,11 @@ package config
 import "testing"
 
 func TestSanitizeOAuthModelAlias_PreservesOptionalFields(t *testing.T) {
+	priority := 7
 	cfg := &Config{
 		OAuthModelAlias: map[string][]OAuthModelAlias{
 			" CoDeX ": {
-				{Name: " gpt-5 ", Alias: " g5 ", Fork: true, DisplayName: " GPT Five ", ForceMapping: true},
+				{Name: " gpt-5 ", Alias: " g5 ", Fork: true, DisplayName: " GPT Five ", Priority: &priority, ForceMapping: true},
 				{Name: "gpt-6", Alias: "g6"},
 			},
 		},
@@ -18,10 +19,10 @@ func TestSanitizeOAuthModelAlias_PreservesOptionalFields(t *testing.T) {
 	if len(aliases) != 2 {
 		t.Fatalf("expected 2 sanitized aliases, got %d", len(aliases))
 	}
-	if aliases[0].Name != "gpt-5" || aliases[0].Alias != "g5" || !aliases[0].Fork || aliases[0].DisplayName != "GPT Five" || !aliases[0].ForceMapping {
+	if aliases[0].Name != "gpt-5" || aliases[0].Alias != "g5" || !aliases[0].Fork || aliases[0].DisplayName != "GPT Five" || aliases[0].Priority == nil || *aliases[0].Priority != priority || !aliases[0].ForceMapping {
 		t.Fatalf("unexpected sanitized first alias: %+v", aliases[0])
 	}
-	if aliases[1].Name != "gpt-6" || aliases[1].Alias != "g6" || aliases[1].Fork || aliases[1].DisplayName != "" || aliases[1].ForceMapping {
+	if aliases[1].Name != "gpt-6" || aliases[1].Alias != "g6" || aliases[1].Fork || aliases[1].DisplayName != "" || aliases[1].Priority != nil || aliases[1].ForceMapping {
 		t.Fatalf("unexpected sanitized second alias: %+v", aliases[1])
 	}
 }
@@ -62,6 +63,7 @@ oauth-model-alias:
     - name: "muse-spark-1.3"
       alias: "muse-latest"
       fork: true
+      priority: 12
       force-mapping: true
 oauth-excluded-models:
   meta:
@@ -83,7 +85,7 @@ oauth-request-scoped-errors:
 	if !ok || len(aliases) != 1 {
 		t.Fatalf("oauth-model-alias[meta] missing or len != 1: %#v", aliases)
 	}
-	if aliases[0].Name != "muse-spark-1.3" || aliases[0].Alias != "muse-latest" || !aliases[0].Fork || !aliases[0].ForceMapping {
+	if aliases[0].Name != "muse-spark-1.3" || aliases[0].Alias != "muse-latest" || !aliases[0].Fork || aliases[0].Priority == nil || *aliases[0].Priority != 12 || !aliases[0].ForceMapping {
 		t.Fatalf("unexpected meta alias: %+v", aliases[0])
 	}
 

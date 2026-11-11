@@ -75,6 +75,9 @@ type VertexCompatModel struct {
 	// ForceMapping rewrites upstream response model fields back to Alias.
 	ForceMapping bool `yaml:"force-mapping,omitempty" json:"force-mapping,omitempty"`
 
+	// Priority controls preference when multiple upstream models share Alias.
+	Priority *int `yaml:"priority,omitempty" json:"priority,omitempty"`
+
 	// Thinking configures the thinking/reasoning capability for this model.
 	Thinking *registry.ThinkingSupport `yaml:"thinking,omitempty" json:"thinking,omitempty"`
 }
@@ -83,6 +86,7 @@ func (m VertexCompatModel) GetName() string        { return m.Name }
 func (m VertexCompatModel) GetAlias() string       { return m.Alias }
 func (m VertexCompatModel) GetDisplayName() string { return m.DisplayName }
 func (m VertexCompatModel) GetForceMapping() bool  { return m.ForceMapping }
+func (m VertexCompatModel) GetPriority() *int      { return m.Priority }
 func (m VertexCompatModel) GetThinking() *registry.ThinkingSupport {
 	return m.Thinking
 }

@@ -76,6 +76,9 @@ func TestCloneForRuntimeDeepCopiesConfig(t *testing.T) {
 	if clone.OAuthModelAlias["codex"][0].Alias != "client-model" {
 		t.Fatalf("clone.OAuthModelAlias[codex][0].Alias = %q, want client-model", clone.OAuthModelAlias["codex"][0].Alias)
 	}
+	if clone.OAuthModelAlias["codex"][0].Priority == nil || *clone.OAuthModelAlias["codex"][0].Priority != 9 {
+		t.Fatalf("clone.OAuthModelAlias[codex][0].Priority = %v, want 9", clone.OAuthModelAlias["codex"][0].Priority)
+	}
 	if got := pluginRawScalar(t, clone.Plugins.Configs["sample"].Raw, "mode"); got != "first" {
 		t.Fatalf("clone plugin raw mode = %q, want first", got)
 	}
@@ -89,6 +92,8 @@ func TestCloneForRuntimeDeepCopiesConfig(t *testing.T) {
 	clone.APIKeys[0] = "clone-client-key"
 	clone.OAuthExcludedModels["codex"][0] = "clone-hidden-model"
 	clone.OAuthModelAlias["codex"][0].Alias = "clone-client-model"
+	clonePriority := 99
+	clone.OAuthModelAlias["codex"][0].Priority = &clonePriority
 	clone.OpenAICompatibility[0].Models[0].Thinking.Levels[0] = "clone-low"
 	clone.Payload.Default[0].Params["object"].(map[string]any)["key"] = "clone-value"
 	plugin := clone.Plugins.Configs["sample"]
@@ -103,6 +108,9 @@ func TestCloneForRuntimeDeepCopiesConfig(t *testing.T) {
 	}
 	if cfg.OAuthModelAlias["codex"][0].Alias != "mutated-client-model" {
 		t.Fatalf("cfg.OAuthModelAlias[codex][0].Alias = %q, want mutated-client-model", cfg.OAuthModelAlias["codex"][0].Alias)
+	}
+	if cfg.OAuthModelAlias["codex"][0].Priority == nil || *cfg.OAuthModelAlias["codex"][0].Priority != 9 {
+		t.Fatalf("cfg.OAuthModelAlias[codex][0].Priority = %v, want 9", cfg.OAuthModelAlias["codex"][0].Priority)
 	}
 	if got := pluginRawScalar(t, cfg.Plugins.Configs["sample"].Raw, "mode"); got != "second" {
 		t.Fatalf("cfg plugin raw mode = %q, want second", got)
@@ -127,6 +135,7 @@ func sampleCloneRuntimeConfig() *Config {
 	bypassStrict := false
 	pluginEnabled := false
 	cacheUserID := true
+	aliasPriority := 9
 
 	return &Config{
 		SDKConfig: SDKConfig{
@@ -205,7 +214,7 @@ func sampleCloneRuntimeConfig() *Config {
 			"codex": {"hidden-model"},
 		},
 		OAuthModelAlias: map[string][]OAuthModelAlias{
-			"codex": {{Name: "upstream-model", Alias: "client-model", Fork: true}},
+			"codex": {{Name: "upstream-model", Alias: "client-model", Fork: true, Priority: &aliasPriority}},
 		},
 		Payload: PayloadConfig{
 			Default: []PayloadRule{{

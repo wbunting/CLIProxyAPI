@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 
 	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -14,12 +15,14 @@ type modelAliasEntry interface {
 	GetName() string
 	GetAlias() string
 	GetForceMapping() bool
+	GetPriority() *int
 }
 
 // oauthModelAliasEntry stores the upstream model name and mapping flags for an alias.
 type oauthModelAliasEntry struct {
 	upstreamModel string
 	configAlias   string
+	priority      int
 	forceMapping  bool
 }
 
@@ -61,9 +64,14 @@ func compileOAuthModelAliasTable(aliases map[string][]internalconfig.OAuthModelA
 			if _, exists := rev[aliasKey]; exists {
 				continue
 			}
+			priority := 0
+			if entry.Priority != nil {
+				priority = *entry.Priority
+			}
 			rev[aliasKey] = oauthModelAliasEntry{
 				upstreamModel: name,
 				configAlias:   alias,
+				priority:      priority,
 				forceMapping:  entry.ForceMapping,
 			}
 		}
@@ -90,6 +98,57 @@ func (m *Manager) SetOAuthModelAlias(aliases map[string][]internalconfig.OAuthMo
 		table = &oauthModelAliasTable{}
 	}
 	m.oauthModelAlias.Store(table)
+}
+
+func (m *Manager) oauthModelAliasEntry(auth *Auth, requestedModel string) (oauthModelAliasEntry, bool) {
+	channel := modelAliasChannel(auth)
+	if channel == "" {
+		return oauthModelAliasEntry{}, false
+	}
+	_, candidates := modelAliasLookupCandidates(requestedModel)
+	if len(candidates) == 0 {
+		return oauthModelAliasEntry{}, false
+	}
+	raw := m.oauthModelAlias.Load()
+	table, _ := raw.(*oauthModelAliasTable)
+	if table == nil || table.reverse == nil {
+		return oauthModelAliasEntry{}, false
+	}
+	reverse := table.reverse[channel]
+	for _, candidate := range candidates {
+		key := strings.ToLower(strings.TrimSpace(candidate))
+		if entry, ok := reverse[key]; ok {
+			return entry, true
+		}
+	}
+	return oauthModelAliasEntry{}, false
+}
+
+func aliasPriorityFromEntries(entries []internalconfig.OAuthModelAlias, requestedModel string) (int, bool) {
+	_, candidates := modelAliasLookupCandidates(requestedModel)
+	for _, candidate := range candidates {
+		for _, entry := range entries {
+			if !strings.EqualFold(strings.TrimSpace(entry.Alias), strings.TrimSpace(candidate)) {
+				continue
+			}
+			if entry.Priority == nil {
+				return 0, true
+			}
+			return *entry.Priority, true
+		}
+	}
+	return 0, false
+}
+
+func (m *Manager) oauthModelAliasPriority(auth *Auth, requestedModel string) int {
+	if priority, ok := aliasPriorityFromEntries(OAuthModelAliasesFromAttributes(authAttributes(auth)), requestedModel); ok {
+		return priority
+	}
+	entry, ok := m.oauthModelAliasEntry(auth, requestedModel)
+	if !ok {
+		return 0
+	}
+	return entry.priority
 }
 
 // applyOAuthModelAlias resolves the upstream model from OAuth model alias.
@@ -151,8 +210,13 @@ func resolveModelAliasPoolFromConfigModels(requestedModel string, models []model
 		return nil
 	}
 
+	type poolEntry struct {
+		model    string
+		priority int
+		order    int
+	}
 	for _, candidate := range candidates {
-		out := make([]string, 0)
+		entries := make([]poolEntry, 0)
 		seen := make(map[string]struct{})
 		for i := range models {
 			name := strings.TrimSpace(models[i].GetName())
@@ -173,9 +237,23 @@ func resolveModelAliasPoolFromConfigModels(requestedModel string, models []model
 				continue
 			}
 			seen[key] = struct{}{}
-			out = append(out, resolved)
+			priority := 0
+			if configured := models[i].GetPriority(); configured != nil {
+				priority = *configured
+			}
+			entries = append(entries, poolEntry{model: resolved, priority: priority, order: i})
 		}
-		if len(out) > 0 {
+		if len(entries) > 0 {
+			sort.SliceStable(entries, func(i, j int) bool {
+				if entries[i].priority != entries[j].priority {
+					return entries[i].priority > entries[j].priority
+				}
+				return entries[i].order < entries[j].order
+			})
+			out := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				out = append(out, entry.model)
+			}
 			return out
 		}
 	}
