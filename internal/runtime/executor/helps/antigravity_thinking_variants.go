@@ -32,7 +32,8 @@ func AntigravityThinkingVariant(model string, payload []byte) (string, []byte) {
 	if len(variants) == 0 {
 		return model, payload
 	}
-	level := pickAntigravityVariantLevel(variants, requestedAntigravityThinkingLevel(payload))
+	requested := thinking.ExtractTranslatedReasoningEffort(payload, "antigravity")
+	level := pickAntigravityVariantLevel(variants, requested)
 	if level == "" {
 		return model, payload
 	}
@@ -65,41 +66,10 @@ func antigravityThinkingVariants(model string) map[string]string {
 	if info := registry.LookupModelInfo(model, "antigravity"); info != nil && info.Config != nil && len(info.Config.ThinkingVariants) > 0 {
 		return info.Config.ThinkingVariants
 	}
-	for _, info := range registry.GetAntigravityModels() {
-		if info != nil && info.ID == model && info.Config != nil {
-			return info.Config.ThinkingVariants
-		}
+	if info := registry.LookupStaticModelInfoByChannel(model, "antigravity"); info != nil && info.Config != nil {
+		return info.Config.ThinkingVariants
 	}
 	return nil
-}
-
-func requestedAntigravityThinkingLevel(payload []byte) string {
-	config := gjson.GetBytes(payload, antigravityThinkingConfigPath)
-	if !config.IsObject() {
-		return ""
-	}
-	for _, key := range []string{"thinkingLevel", "thinking_level"} {
-		if level := strings.ToLower(strings.TrimSpace(config.Get(key).String())); level != "" {
-			return level
-		}
-	}
-	for _, key := range []string{"thinkingBudget", "thinking_budget"} {
-		budget := config.Get(key)
-		if budget.Type != gjson.Number {
-			continue
-		}
-		switch value := int(budget.Int()); {
-		case value == 0:
-			return "none"
-		case value < 0:
-			return "auto"
-		default:
-			if level, ok := thinking.ConvertBudgetToLevel(value); ok {
-				return level
-			}
-		}
-	}
-	return ""
 }
 
 func pickAntigravityVariantLevel(variants map[string]string, requested string) string {
