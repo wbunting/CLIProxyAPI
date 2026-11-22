@@ -79,3 +79,52 @@ func TestEmbeddedAntigravityCatalogRefresh(t *testing.T) {
 		t.Fatal("GPT-OSS must use the upstream context limit and thinking support")
 	}
 }
+
+func TestEmbeddedAntigravityThinkingGroups(t *testing.T) {
+	var catalog staticModelsJSON
+	if err := json.Unmarshal(embeddedModelsJSON, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	models := make(map[string]*ModelInfo, len(catalog.Antigravity))
+	for _, model := range catalog.Antigravity {
+		models[model.ID] = model
+	}
+
+	groups := map[string][]string{
+		"gemini-4-neon":                 {"low", "medium", "high", "xhigh"},
+		"gemini-4-hydrogen":             {"low", "medium", "high", "xhigh"},
+		"gemini-4-carbon":               {"low", "medium", "high"},
+		"gemini-4-argon":                {"low", "medium", "high"},
+		"gemini-3.8-flash":              {"low", "medium", "high"},
+		"claude-opus-5-5-antigravity":   {"low", "medium", "high"},
+		"claude-sonnet-5-5-antigravity": {"low", "medium", "high"},
+	}
+	for id, levels := range groups {
+		t.Run(id, func(t *testing.T) {
+			group := models[id]
+			if group == nil || group.Config == nil {
+				t.Fatalf("missing grouped model %q", id)
+			}
+			if strings.Join(group.Thinking.Levels, ",") != strings.Join(levels, ",") {
+				t.Fatalf("levels = %v, want %v", group.Thinking.Levels, levels)
+			}
+			if len(group.Config.ThinkingVariants) != len(levels) {
+				t.Fatalf("variants = %v, want one per level %v", group.Config.ThinkingVariants, levels)
+			}
+			for _, level := range levels {
+				variant := models[group.Config.ThinkingVariants[level]]
+				if variant == nil {
+					t.Fatalf("level %q maps to %q, which is not in the catalog", level, group.Config.ThinkingVariants[level])
+				}
+				if variant.ContextLength != group.ContextLength || variant.MaxCompletionTokens != group.MaxCompletionTokens {
+					t.Fatalf("variant %q limits differ from group %q", variant.ID, id)
+				}
+			}
+		})
+	}
+	for id, model := range models {
+		if model.DisplayName == model.ID {
+			t.Errorf("model %q has no display name", id)
+		}
+	}
+}

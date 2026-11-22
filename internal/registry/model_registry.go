@@ -107,6 +107,10 @@ type ModelConfig struct {
 	// OverrideHeader forces upstream request headers when non-empty.
 	// Keys are header names (e.g. "user-agent"); values replace any existing header.
 	OverrideHeader map[string]string `json:"override_header,omitempty"`
+	// ThinkingVariants maps a thinking level to the upstream model that serves it.
+	// Antigravity exposes each effort as its own model (gemini-4-neon-low, ...);
+	// a grouped entry lets clients pick one model and a thinking level instead.
+	ThinkingVariants map[string]string `json:"thinking_variants,omitempty"`
 }
 
 // UnmarshalJSON loads internal native capability metadata without exposing it
@@ -775,6 +779,12 @@ func cloneModelInfo(model *ModelInfo) *ModelInfo {
 			copyConfig.OverrideHeader = make(map[string]string, len(model.Config.OverrideHeader))
 			for key, value := range model.Config.OverrideHeader {
 				copyConfig.OverrideHeader[key] = value
+			}
+		}
+		if len(model.Config.ThinkingVariants) > 0 {
+			copyConfig.ThinkingVariants = make(map[string]string, len(model.Config.ThinkingVariants))
+			for level, variant := range model.Config.ThinkingVariants {
+				copyConfig.ThinkingVariants[level] = variant
 			}
 		}
 		copyModel.Config = &copyConfig
