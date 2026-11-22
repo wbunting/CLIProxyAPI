@@ -158,6 +158,28 @@ func TestAntigravityBuildRequest_UsesRouteModelWhenPayloadContainsDifferentModel
 	}
 }
 
+func TestAntigravityBuildRequestSendsThinkingVariantForGroupedModel(t *testing.T) {
+	body := buildRequestBodyFromRawPayload(t, "gemini-4-neon", []byte(`{
+		"request": {
+			"contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+			"generationConfig": {"thinkingConfig": {"thinkingLevel": "xhigh", "includeThoughts": true}}
+		}
+	}`))
+
+	if got, ok := body["model"].(string); !ok || got != "gemini-4-neon-xhigh" {
+		t.Fatalf("upstream model = %v, want gemini-4-neon-xhigh", body["model"])
+	}
+	request, _ := body["request"].(map[string]any)
+	generationConfig, _ := request["generationConfig"].(map[string]any)
+	thinkingConfig, _ := generationConfig["thinkingConfig"].(map[string]any)
+	if _, ok := thinkingConfig["thinkingLevel"]; ok {
+		t.Fatalf("thinkingLevel should be omitted for the xhigh variant: %v", thinkingConfig)
+	}
+	if thinkingConfig["includeThoughts"] != true {
+		t.Fatalf("includeThoughts should be preserved: %v", thinkingConfig)
+	}
+}
+
 func TestAntigravityBuildRequestUsesDerivedSessionIDAndPreservesExplicit(t *testing.T) {
 	t.Parallel()
 

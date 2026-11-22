@@ -56,6 +56,8 @@ func (e *AntigravityExecutor) buildRequest(ctx context.Context, auth *cliproxyau
 	if errProject != nil {
 		return nil, errProject
 	}
+	// Grouped models (gemini-4-neon) become the effort-specific model Antigravity serves.
+	modelName, payload = helps.AntigravityThinkingVariant(modelName, payload)
 	payload = geminiToAntigravity(modelName, payload, projectID, derivedSessionIDs...)
 
 	// Cap maxOutputTokens to model's max_completion_tokens from registry
