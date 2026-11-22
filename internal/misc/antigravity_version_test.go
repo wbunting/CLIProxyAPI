@@ -48,10 +48,10 @@ func TestAntigravityLatestVersionUsesCurrentHubFallback(t *testing.T) {
 	}
 }
 
-// Cloud Code resolves newer models only for clients reporting at least 2.9.0;
-// older versions get 404 Requested entity was not found.
+// Hub 2.34.0 exposes Gemini 4 Neon and Argon in fetchAvailableModels;
+// the previous fallback silently returned a restricted model catalog.
 func TestAntigravityFallbackVersionMeetsBackendFloor(t *testing.T) {
-	const floorMajor, floorMinor = 2, 9
+	const floorMajor, floorMinor = 2, 34
 
 	var major, minor, patch int
 	if _, err := fmt.Sscanf(antigravityFallbackVersion, "%d.%d.%d", &major, &minor, &patch); err != nil {
